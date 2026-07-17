@@ -36,6 +36,17 @@ class PreTreatmentTest(unittest.TestCase):
         self.assertFalse(by_code["PRE_IMAGING"]["applicable"])
         self.assertEqual(by_code["PRE_IMAGING"]["suggested_obligation_state"], "NOT_APPLICABLE")
 
+    def test_checklist_exposes_draft_ai_review_with_citations_for_each_check(self):
+        with patch.object(feature, "_read_evidence", return_value=[]), patch.object(feature, "_read_audit", return_value=[]):
+            result = feature.get_checklist("enc", Role.ASSISTANT)
+
+        for item in result["items"]:
+            review = item["ai_review"]
+            self.assertEqual(review["state"], "DRAFT")
+            self.assertTrue(review["suggestion"])
+            self.assertTrue(review["citations"])
+            self.assertTrue(review["citations"][0]["ref"])
+
     def test_attestation_requires_staff_role_and_timezone_timestamp(self):
         body = feature.Attestation(value={"answer": "none"}, performed_at=datetime(2026, 7, 17, 9))
         with self.assertRaises(feature.AppError) as caught:
@@ -59,6 +70,16 @@ class PreTreatmentTest(unittest.TestCase):
         upsert.assert_called_once_with("enc", "PRE_STERILIZATION", "VERIFIED", stored, "FORM", "pre-treatment", "DENTIST")
         audit.assert_called_once_with("DENTIST", "PRE_TREATMENT_ATTESTED", "evidence", evidence["id"], "enc", {"code": "PRE_STERILIZATION", "performed_at": stored["performed_at"]})
         self.assertEqual(result, evidence)
+
+    def test_medical_history_attestation_keeps_only_valid_reviewed_source_refs(self):
+        body = feature.Attestation(
+            value={"summary": "No relevant contraindications noted.", "reviewed_source_refs": ["DOC-DEMO-001", "", 42]},
+            performed_at=datetime(2026, 7, 18, 2, tzinfo=timezone.utc),
+        )
+        with patch.object(feature.services, "upsert_evidence", return_value={"id": "evidence"}) as upsert, patch.object(feature.services, "append_audit"):
+            feature.put_attestation("enc", "PRE_MEDICAL_HISTORY", body, Role.ASSISTANT)
+
+        self.assertEqual(upsert.call_args.args[3]["reviewed_source_refs"], ["DOC-DEMO-001"])
 
     def test_imaging_attestation_is_server_marked_na_when_procedure_does_not_require_it(self):
         body = feature.Attestation(value={"completed": True}, performed_at=datetime(2026, 7, 17, 2, tzinfo=timezone.utc))

@@ -53,6 +53,8 @@ AI chỉ hỗ trợ tạo bản tóm tắt `DRAFT/UNVERIFIED` cho medical-histor
 
 Module 03 không tạo provider/model AI mới. Khi Module 02 đã được merge, Module 03 reuse output/source citation của Documentation & Staff AI. Audit chỉ lưu quyết định, source reference, actor và thời gian; không lưu raw note.
 
+Trong demo hiện tại, `GET /api/v1/encounters/{id}/pre-treatment` trả fixture deterministic `ai_review` (`{state:"DRAFT", suggestion, citations}`) cho mỗi check. Staff có thể dùng, sửa hoặc reject draft; chỉ citation reference đã chọn review được ghi cùng evidence. Khi Module 02 trả cùng schema, thay fixture này; Module 03 không thêm provider.
+
 Image AI nằm ngoài scope của demo và Module 03. Imaging chỉ là human attestation có `imaging_reference`; nếu `PRE_PROCEDURE.requires_imaging` là `false`, server ghi `not_applicable: true`.
 
 ### Source ownership and integration boundary

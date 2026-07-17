@@ -47,6 +47,8 @@ function PreTreatment() {
   const [fieldErrors, setFieldErrors] = useState({});
   const [dirty, setDirty] = useState({});
   const [imagingReviewed, setImagingReviewed] = useState(false);
+  const [acceptedReviews, setAcceptedReviews] = useState({});
+  const [rejectedReviews, setRejectedReviews] = useState({});
 
   const load = async () => {
     setLoading(true);
@@ -84,29 +86,39 @@ function PreTreatment() {
     setFieldErrors(current => ({ ...current, [code]: "" }));
   };
 
-  const valueFor = code => {
+  const useSuggestion = item => {
+    setValues(current => ({ ...current, [item.code]: { ...current[item.code], ...item.ai_review.suggestion } }));
+    setAcceptedReviews(current => ({ ...current, [item.code]: true }));
+    setRejectedReviews(current => ({ ...current, [item.code]: false }));
+    if (item.code === "PRE_IMAGING") setImagingReviewed(true);
+    setDirty(current => ({ ...current, [item.code]: true }));
+  };
+
+  const valueFor = item => {
+    const { code } = item;
     const value = values[code];
-    if (code === "PRE_MEDICAL_HISTORY") return value.summary.trim() ? { summary: value.summary.trim() } : null;
+    const withReviewedSources = result => ({ ...result, reviewed_source_refs: acceptedReviews[code] ? item.ai_review?.citations.map(citation => citation.ref) || [] : [] });
+    if (code === "PRE_MEDICAL_HISTORY") return value.summary.trim() ? withReviewedSources({ summary: value.summary.trim() }) : null;
     if (code === "PRE_ALLERGY") return value.status === "PRESENT"
-      ? value.allergen.trim() ? { status: value.status, allergen: value.allergen.trim() } : null
-      : { status: value.status };
+      ? value.allergen.trim() ? withReviewedSources({ status: value.status, allergen: value.allergen.trim() }) : null
+      : withReviewedSources({ status: value.status });
     if (code === "PRE_VITALS") {
       const readings = [value.systolic, value.diastolic, value.pulse].map(Number);
       return readings.every(reading => Number.isFinite(reading) && reading > 0)
-        ? { systolic: readings[0], diastolic: readings[1], pulse: readings[2] }
+        ? withReviewedSources({ systolic: readings[0], diastolic: readings[1], pulse: readings[2] })
         : null;
     }
     if (code === "PRE_STERILIZATION") return value.cycle_or_tray_id.trim()
-      ? { confirmed: true, cycle_or_tray_id: value.cycle_or_tray_id.trim() }
+      ? withReviewedSources({ confirmed: true, cycle_or_tray_id: value.cycle_or_tray_id.trim() })
       : null;
     if (code === "PRE_IMAGING") return imagingReviewed && value.imaging_reference.trim()
-      ? { reviewed: true, imaging_reference: value.imaging_reference.trim() }
+      ? withReviewedSources({ reviewed: true, imaging_reference: value.imaging_reference.trim() })
       : null;
     return null;
   };
 
   const attest = async item => {
-    const value = valueFor(item.code);
+    const value = valueFor(item);
     if (!value) {
       setFieldErrors(current => ({ ...current, [item.code]: `Complete the ${COPY[item.code][0].toLowerCase()} fields before confirming.` }));
       requestAnimationFrame(() => document.getElementById(`${item.code}-first`)?.focus());
@@ -144,6 +156,8 @@ function PreTreatment() {
       setDirty({});
       setFieldErrors({});
       setImagingReviewed(false);
+      setAcceptedReviews({});
+      setRejectedReviews({});
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -178,7 +192,7 @@ function PreTreatment() {
         <div className="check-content"><div className="check-title"><div><h2>{title}</h2><p>{description}</p></div><span className="status-pill">{verified ? "Verified" : notApplicable ? "Not Applicable" : "Needs Confirmation"}</span></div>
           {verified ? <div className="verified-detail"><strong>{evidenceSummary(item)}</strong><span><span translate="no">{item.evidence.actor_role}</span> · {formatDate(item.evidence.value?.performed_at || item.evidence.updated_at)}</span></div>
               : notApplicable ? <div className="imaging-not-required"><p className="muted">This procedure does not require imaging.</p><div className="xray-mock compact" role="img" aria-label="Simulated dental X-ray preview"><span className="tooth tooth-one" /><span className="tooth tooth-two" /><span className="tooth tooth-three" /><span className="ai-marker">AI</span></div><p className="muted">AI image review is shown here as a demo only; no imaging evidence is created for this encounter.</p></div>
-              : <form noValidate onSubmit={event => { event.preventDefault(); attest(item); }}><fieldset disabled={Boolean(saving)}>{fields(item)}{fieldErrors[item.code] && <p id={`${item.code}-error`} className="field-error" role="alert">{fieldErrors[item.code]}</p>}<button type="submit" className="confirm-button" aria-live="polite">{saving === item.code ? "Confirming…" : `Confirm ${title}`}</button></fieldset></form>}
+              : <>{!rejectedReviews[item.code] && <section className="ai-review" aria-label={`${title} AI review`}><strong>AI suggestion — unverified</strong><ul>{item.ai_review.citations.map(citation => <li key={citation.ref}><b>{citation.label}</b>: {citation.excerpt}</li>)}</ul><div className="review-actions"><button type="button" className="review-button" onClick={() => useSuggestion(item)}>Use suggestion</button><button type="button" className="reject-button" onClick={() => { setRejectedReviews(current => ({ ...current, [item.code]: true })); setAcceptedReviews(current => ({ ...current, [item.code]: false })); }}>Reject suggestion</button></div>{acceptedReviews[item.code] && <span className="reviewed-status">Cited records selected for review</span>}</section>}<form noValidate onSubmit={event => { event.preventDefault(); attest(item); }}><fieldset disabled={Boolean(saving)}>{fields(item)}{fieldErrors[item.code] && <p id={`${item.code}-error`} className="field-error" role="alert">{fieldErrors[item.code]}</p>}<button type="submit" className="confirm-button" aria-live="polite">{saving === item.code ? "Confirming…" : `Confirm ${title}`}</button></fieldset></form></>}
         </div>
       </article>;
     })}</section><aside className="safety-aside"><p className="eyebrow">HOW IT WORKS</p><h2>Human Decision, Auditable Evidence</h2><ol><li>Choose the staff role.</li><li>Enter the minimum current-check data.</li><li>Confirm the item as staff.</li><li>Store verified evidence, actor, and UTC time.</li></ol><div className="audit-trail"><strong>Audit trail</strong>{audit.length ? <ul>{audit.slice(0, 5).map((event, index) => <li key={`${event.created_at}-${index}`}><b>{event.action === "PRE_TREATMENT_DEMO_RESET" ? "QA started a fresh scenario" : `${event.actor_role} confirmed ${event.metadata?.code?.replace("PRE_", "").replaceAll("_", " ")}`}</b><span>{formatDate(event.created_at)}</span></li>)}</ul> : <p>No pre-treatment activity yet.</p>}</div><div className="ai-boundary"><strong>AI Boundary</strong><p>AI may draft a cited history summary. It never confirms a check or decides treatment readiness.</p></div></aside></div>}

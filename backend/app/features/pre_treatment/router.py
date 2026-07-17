@@ -13,6 +13,33 @@ from ...core.errors import AppError
 router = APIRouter(prefix="/api/v1/encounters", tags=["pre-treatment"])
 CODES = ("PRE_MEDICAL_HISTORY", "PRE_ALLERGY", "PRE_VITALS", "PRE_STERILIZATION", "PRE_IMAGING")
 STAFF_ROLES = {Role.ASSISTANT, Role.DENTIST}
+AI_REVIEWS = {
+    "PRE_MEDICAL_HISTORY": {
+        "state": "DRAFT",
+        "suggestion": {"summary": "No relevant medical contraindications noted in the intake record."},
+        "citations": [{"ref": "DOC-DEMO-001", "label": "Intake record", "excerpt": "Patient reported no relevant medical conditions or medication changes."}],
+    },
+    "PRE_ALLERGY": {
+        "state": "DRAFT",
+        "suggestion": {"status": "NONE_KNOWN"},
+        "citations": [{"ref": "DOC-DEMO-002", "label": "Allergy intake", "excerpt": "No known allergies reported."}],
+    },
+    "PRE_VITALS": {
+        "state": "DRAFT",
+        "suggestion": {"systolic": 120, "diastolic": 80, "pulse": 72},
+        "citations": [{"ref": "DOC-DEMO-003", "label": "Vitals record", "excerpt": "Recorded blood pressure 120/80 mmHg; pulse 72 bpm."}],
+    },
+    "PRE_STERILIZATION": {
+        "state": "DRAFT",
+        "suggestion": {"cycle_or_tray_id": "AUTOCLAVE-2026-0718-A"},
+        "citations": [{"ref": "DOC-DEMO-004", "label": "Sterilization log", "excerpt": "Tray released from autoclave cycle AUTOCLAVE-2026-0718-A."}],
+    },
+    "PRE_IMAGING": {
+        "state": "DRAFT",
+        "suggestion": {"imaging_reference": "XRAY-2026-001"},
+        "citations": [{"ref": "DOC-DEMO-005", "label": "Imaging register", "excerpt": "Current encounter imaging reference XRAY-2026-001 is available for review."}],
+    },
+}
 
 
 class Attestation(BaseModel):
@@ -55,6 +82,7 @@ def get_checklist(encounter_id: str, _role=Depends(dependencies.require_demo_rol
             "applicable": code != "PRE_IMAGING" or requires_imaging is not False,
             "suggested_obligation_state": "NOT_APPLICABLE" if code == "PRE_IMAGING" and requires_imaging is False else None,
             "evidence": evidence.get(code),
+            "ai_review": AI_REVIEWS[code],
         }
         for code in CODES
     ], "audit": _read_audit(encounter_id)}
@@ -81,6 +109,9 @@ def put_attestation(encounter_id: str, code: str, body: Attestation, role=Depend
 
     performed_at = body.performed_at.astimezone(timezone.utc).isoformat()
     value = {**body.value, "performed_at": performed_at}
+    if "reviewed_source_refs" in body.value:
+        refs = body.value["reviewed_source_refs"]
+        value["reviewed_source_refs"] = [ref for ref in refs if isinstance(ref, str) and ref] if isinstance(refs, list) else []
     if code == "PRE_IMAGING" and _requires_imaging(encounter_id) is False:
         value = {"not_applicable": True, "performed_at": performed_at}
     evidence = services.upsert_evidence(encounter_id, code, "VERIFIED", value, "FORM", "pre-treatment", role.value)
