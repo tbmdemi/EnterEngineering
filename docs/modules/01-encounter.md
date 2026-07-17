@@ -25,6 +25,6 @@ React export bắt buộc: `export const route = { path, label, Component }`; in
 Mở được UUID seed; đi đúng năm stage không mất context/version; stage skip/backward hoặc version cũ trả lỗi rõ ràng.
 
 ## Handoff integrator
-Router export: ghi import path và prefix.
-Route export: ghi import path và URL.
-Verification: ghi lệnh test, kết quả và commit hash.
+Router export: `backend.app.features.encounter:router`, prefix `/api/v1/encounters`.
+Route export: `frontend/src/features/encounter/index.jsx:route`, URL `/encounter`.
+Verification: `.venv/bin/python -m unittest discover -s tests -v` — 11 passed; implementation commit `1914561`.
