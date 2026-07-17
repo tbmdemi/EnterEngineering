@@ -79,23 +79,23 @@ class FoundationContractTest(unittest.TestCase):
         self.assertIn("INSERT INTO audit_events", connection.calls[2][0])
 
     def test_react_feature_route_contract_and_registry_are_documented(self):
-        registry = (ROOT / "frontend/src/routes.js").read_text()
+        registry = (ROOT / "frontend/src/routes.js").read_text(encoding="utf-8")
         self.assertIn("export const featureRoutes", registry)
         convention = "export const route = { path, label, Component }"
         for spec in (ROOT / "docs/modules").glob("*.md"):
-            self.assertIn(convention, spec.read_text(), spec.name)
+            self.assertIn(convention, spec.read_text(encoding="utf-8"), spec.name)
 
     def test_api_registers_validation_and_unhandled_error_boundaries(self):
-        source = (ROOT / "backend/app/main.py").read_text()
+        source = (ROOT / "backend/app/main.py").read_text(encoding="utf-8")
         self.assertIn("RequestValidationError", source)
         self.assertIn("@app.exception_handler(Exception)", source)
         self.assertIn('"details"', source)
 
     def test_database_contains_only_required_foundation_tables_and_seed(self):
-        schema = (ROOT / "db/init/00_core.sql").read_text()
+        schema = (ROOT / "db/init/00_core.sql").read_text(encoding="utf-8")
         for table in ("patients", "appointments", "encounters", "evidence_items", "obligation_checks", "tasks", "ai_runs", "audit_events"):
             self.assertIn(f"CREATE TABLE {table}", schema)
-        seed = (ROOT / "db/init/01_seed.sql").read_text()
+        seed = (ROOT / "db/init/01_seed.sql").read_text(encoding="utf-8")
         self.assertIn("Nguyen Minh Anh", seed)
         self.assertIn("dental-policy.v1", seed)
 

@@ -1,6 +1,6 @@
-from backend.app.core.contracts import EncounterStage
-from backend.app.core.errors import AppError
-from backend.app.core.services import _connect
+from ...core.contracts import EncounterStage
+from ...core.errors import AppError
+from ...core.services import _connect
 
 
 STAGES = list(EncounterStage)
@@ -42,7 +42,11 @@ def advance_stage(encounter_id, stage, version):
             raise AppError(
                 "STALE_ENCOUNTER_VERSION",
                 "Encounter was updated by another request",
-                {"expected_version": version, "current_version": current["version"]},
+                {
+                    "expected_version": version,
+                    "current_version": current["version"],
+                    "current_stage": current_stage.value,
+                },
                 409,
             )
         if STAGES.index(target) != STAGES.index(current_stage) + 1:
@@ -61,10 +65,15 @@ def advance_stage(encounter_id, stage, version):
             (target.value, encounter_id, version),
         ).fetchone()
         if not updated:
+            refreshed = _context(connection, encounter_id)
             raise AppError(
                 "STALE_ENCOUNTER_VERSION",
                 "Encounter was updated by another request",
-                {"expected_version": version, "current_version": current["version"]},
+                {
+                    "expected_version": version,
+                    "current_version": refreshed["version"],
+                    "current_stage": refreshed["stage"],
+                },
                 409,
             )
         return _context(connection, encounter_id)

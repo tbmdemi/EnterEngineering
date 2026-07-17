@@ -1,2 +1,4 @@
 // Feature modules export: export const route = { path, label, Component }
-export const featureRoutes = [];
+import { route as encounterRoute } from "./features/encounter";
+
+export const featureRoutes = [encounterRoute];

@@ -1,7 +1,10 @@
 import unittest
 import importlib
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import patch
+
+from pydantic import ValidationError
 
 from backend.app.core.errors import AppError
 from backend.app.core.contracts import Role
@@ -9,6 +12,7 @@ from backend.app.features.encounter import service
 from backend.app.features.encounter.router import StageChange
 
 encounter_router = importlib.import_module("backend.app.features.encounter.router")
+ROOT = Path(__file__).parents[2]
 
 
 CONTEXT = {
@@ -86,6 +90,18 @@ class EncounterTest(unittest.TestCase):
         self.assertEqual(caught.exception.payload["code"], "STALE_ENCOUNTER_VERSION")
         self.assertEqual(len(connection.calls), 1)
 
+    def test_lost_update_refreshes_current_version_before_returning_conflict(self):
+        progressed = {**CONTEXT, "stage": "PRE_TREATMENT", "version": 2}
+        connection, connect = self.connection([CONTEXT, None, progressed])
+        with patch.object(service, "_connect", connect), self.assertRaises(AppError) as caught:
+            service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 1)
+
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(caught.exception.payload["code"], "STALE_ENCOUNTER_VERSION")
+        self.assertEqual(caught.exception.payload["details"]["current_version"], 2)
+        self.assertEqual(caught.exception.payload["details"]["current_stage"], "PRE_TREATMENT")
+        self.assertEqual(len(connection.calls), 3)
+
     def test_stage_change_denies_patient_and_qa(self):
         change = StageChange(stage="PRE_TREATMENT", version=1)
         for role in (Role.PATIENT, Role.QA):
@@ -99,6 +115,11 @@ class EncounterTest(unittest.TestCase):
             with self.subTest(role=role), patch.object(encounter_router, "advance_stage", return_value=CONTEXT) as advance:
                 encounter_router.change_stage(CONTEXT["id"], change, role)
             advance.assert_called_once()
+
+    def test_stage_change_requires_a_positive_version(self):
+        for version in (0, -1):
+            with self.subTest(version=version), self.assertRaises(ValidationError):
+                StageChange(stage="PRE_TREATMENT", version=version)
 
     def test_full_stage_sequence_preserves_context_and_increments_version(self):
         state = dict(CONTEXT)
@@ -134,6 +155,32 @@ class EncounterTest(unittest.TestCase):
         with patch.object(service, "_connect", connect), self.assertRaises(AppError) as caught:
             service.get_encounter("missing")
         self.assertEqual(caught.exception.status_code, 404)
+
+    def test_frontend_preserves_context_and_handles_pending_and_stale_requests(self):
+        source = (ROOT / "frontend/src/features/encounter/index.jsx").read_text(encoding="utf-8")
+
+        self.assertIn('export const route = { path: "/encounter"', source)
+        self.assertIn("aria-current", source)
+        self.assertIn("disabled={isAdvancing}", source)
+        self.assertIn("STALE_ENCOUNTER_VERSION", source)
+        self.assertIn("await load()", source)
+        self.assertNotIn("stage: stages[stages.indexOf(data.stage) + 1]", source)
+
+    def test_demo_bootstrap_registers_encounter_and_api_proxy(self):
+        from backend.app.main import app
+
+        paths = {route.path for route in app.routes}
+        self.assertIn("/api/v1/encounters/{encounter_id}", paths)
+        self.assertIn("/api/v1/encounters/{encounter_id}/stage", paths)
+
+        registry = (ROOT / "frontend/src/routes.js").read_text(encoding="utf-8")
+        vite_config = (ROOT / "frontend/vite.config.js").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn('import { route as encounterRoute }', registry)
+        self.assertIn("featureRoutes = [encounterRoute]", registry)
+        self.assertIn('"/api"', vite_config)
+        self.assertIn('"http://localhost:8000"', vite_config)
+        self.assertIn("API_PROXY_TARGET: http://api:8000", compose)
 
 
 if __name__ == "__main__":

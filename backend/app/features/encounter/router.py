@@ -1,12 +1,12 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from backend.app.core.contracts import EncounterStage
-from backend.app.core.contracts import Role
-from backend.app.core.errors import AppError
-from backend.app.dependencies import require_demo_role
+from ...core.contracts import EncounterStage
+from ...core.contracts import Role
+from ...core.errors import AppError
+from ...dependencies import require_demo_role
 
 from .service import advance_stage, get_encounter
 
@@ -17,7 +17,7 @@ STAGE_WRITERS = {Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST}
 
 class StageChange(BaseModel):
     stage: EncounterStage
-    version: int
+    version: int = Field(ge=1)
 
 
 @router.get("/{encounter_id}")
