@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -15,12 +16,11 @@ STAFF_ROLES = {Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST, Role.QA}
 
 
 class TaskRequest(BaseModel):
-    encounter_id: str
+    encounter_id: UUID
     obligation_code: str
     task_type: str
     owner_role: Optional[Role] = None
     due_at: Optional[datetime] = None
-    idempotency_key: str
 
 
 def _staff(role):
@@ -42,21 +42,35 @@ def validate_completion(task):
 def validate_task_request(task_type, owner_role):
     if task_type == "REFERRAL" and owner_role is None:
         raise AppError("REFERRAL_OWNER_REQUIRED", "Referral requires an owner", status_code=422)
+    if task_type == "REFERRAL" and owner_role not in STAFF_ROLES:
+        raise AppError("REFERRAL_OWNER_INVALID", "Referral owner must be a staff role", status_code=422)
 
 
 def find_conflicts(appointments):
     active = [row for row in appointments if row["status"] != "CANCELLED"]
-    conflicts = []
-    for index, left in enumerate(active):
-        for right in active[index + 1:]:
-            if left["chair"] == right["chair"] and left["starts_at"] < right["ends_at"] and left["ends_at"] > right["starts_at"]:
-                conflicts.append({"appointment_id": left["id"], "conflicts_with": right["id"], "chair": left["chair"]})
-    return conflicts
+    anchor = next((row for row in active if row.get("is_anchor")), active[0] if active else None)
+    if not anchor:
+        return []
+    return [
+        {"appointment_id": anchor["id"], "conflicts_with": row["id"], "chair": anchor["chair"]}
+        for row in active if row["id"] != anchor["id"] and row["chair"] == anchor["chair"]
+        and anchor["starts_at"] < row["ends_at"] and anchor["ends_at"] > row["starts_at"]
+    ]
 
 
-def load_appointments():
+def load_appointments(encounter_id):
     with _connect() as connection:
-        return [dict(row) for row in connection.execute("SELECT id, chair, starts_at, ends_at, status FROM appointments ORDER BY starts_at, id").fetchall()]
+        return [dict(row) for row in connection.execute("""
+            WITH anchor AS (
+              SELECT a.* FROM appointments a
+              JOIN encounters e ON e.appointment_id = a.id
+              WHERE e.id = %s
+            )
+            SELECT a.id, a.chair, a.starts_at, a.ends_at, a.status, (a.id = anchor.id) AS is_anchor
+            FROM anchor JOIN appointments a ON a.chair = anchor.chair
+            WHERE a.id = anchor.id OR (a.status <> 'CANCELLED' AND a.starts_at < anchor.ends_at AND a.ends_at > anchor.starts_at)
+            ORDER BY is_anchor DESC, a.starts_at, a.id
+        """, (encounter_id,)).fetchall()]
 
 
 @router.get("/api/v1/tasks")
@@ -84,7 +98,8 @@ def create_task(request: TaskRequest, role=Depends(require_demo_role)):
     _staff(role)
     validate_task_request(request.task_type, request.owner_role)
     owner = request.owner_role or role
-    task = ensure_task(request.encounter_id, request.obligation_code, request.task_type, owner.value, request.due_at, request.idempotency_key)
+    idempotency_key = f"coord:{request.encounter_id}:{request.task_type.lower()}:{request.obligation_code.lower()}"
+    task = ensure_task(request.encounter_id, request.obligation_code, request.task_type, owner.value, request.due_at, idempotency_key)
     if request.task_type == "REFERRAL":
         upsert_evidence(request.encounter_id, "COORD_REFERRAL_OWNER", EvidenceState.VERIFIED.value, {"owner_role": owner.value}, "TASK", str(task["id"]), role.value)
     append_audit(role.value, "TASK_CREATED", "task", task["id"], request.encounter_id, {"task_type": request.task_type, "owner_role": owner.value})
@@ -92,7 +107,7 @@ def create_task(request: TaskRequest, role=Depends(require_demo_role)):
 
 
 @router.post("/api/v1/tasks/{task_id}/acknowledge")
-def acknowledge(task_id: str, role=Depends(require_demo_role)):
+def acknowledge(task_id: UUID, role=Depends(require_demo_role)):
     task = _task(task_id)
     authorize_task_mutation(task, role)
     if task["status"] == TaskStatus.COMPLETED.value:
@@ -106,7 +121,7 @@ def acknowledge(task_id: str, role=Depends(require_demo_role)):
 
 
 @router.post("/api/v1/tasks/{task_id}/complete")
-def complete(task_id: str, role=Depends(require_demo_role)):
+def complete(task_id: UUID, role=Depends(require_demo_role)):
     task = _task(task_id)
     authorize_task_mutation(task, role)
     validate_completion(task)
@@ -117,9 +132,9 @@ def complete(task_id: str, role=Depends(require_demo_role)):
 
 
 @router.post("/api/v1/encounters/{encounter_id}/coordination/evaluate")
-def evaluate_coordination(encounter_id: str, role=Depends(require_demo_role)):
+def evaluate_coordination(encounter_id: UUID, role=Depends(require_demo_role)):
     _staff(role)
-    conflicts = find_conflicts(load_appointments())
+    conflicts = find_conflicts(load_appointments(encounter_id))
     upsert_evidence(encounter_id, "COORD_SCHEDULE_CLEAR", EvidenceState.VERIFIED.value, {"clear": not conflicts, "conflicts": conflicts}, "SCHEDULE", None, role.value)
     task = None
     if conflicts:
