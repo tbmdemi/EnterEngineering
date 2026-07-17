@@ -3,6 +3,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
+from ...core.contracts import Role
+from ...core.errors import AppError
 from ...core.services import _connect, append_audit, ensure_task
 from ...dependencies import require_demo_role
 from .evaluator import POLICY_VERSION, evaluate, task_key
@@ -16,6 +18,18 @@ class EvaluationRequest(BaseModel):
     imaging_required: bool = False
 
 
+def _require_staff(role=Depends(require_demo_role)):
+    if role not in {Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST, Role.QA}:
+        raise AppError("ROLE_FORBIDDEN", "Staff role is required", status_code=403)
+    return role
+
+
+def _require_auditor(role=Depends(require_demo_role)):
+    if role not in {Role.DENTIST, Role.QA}:
+        raise AppError("ROLE_FORBIDDEN", "Dentist or QA role is required", status_code=403)
+    return role
+
+
 def _evidence(encounter_id):
     with _connect() as connection:
         rows = connection.execute(
@@ -26,7 +40,7 @@ def _evidence(encounter_id):
 
 
 @router.post("/encounters/{encounter_id}/evaluate")
-def evaluate_encounter(encounter_id: UUID, request: EvaluationRequest, role=Depends(require_demo_role)):
+def evaluate_encounter(encounter_id: UUID, request: EvaluationRequest, role=Depends(_require_staff)):
     checks = evaluate(_evidence(encounter_id), request.model_dump())
     with _connect() as connection:
         for check in checks:
@@ -45,7 +59,7 @@ def evaluate_encounter(encounter_id: UUID, request: EvaluationRequest, role=Depe
 
 
 @router.get("/encounters/{encounter_id}/readiness")
-def readiness(encounter_id: UUID, _role=Depends(require_demo_role)):
+def readiness(encounter_id: UUID, _role=Depends(_require_staff)):
     with _connect() as connection:
         checks = connection.execute(
             "SELECT code, state, policy_version, updated_at FROM obligation_checks WHERE encounter_id = %s ORDER BY code",
@@ -59,7 +73,7 @@ def readiness(encounter_id: UUID, _role=Depends(require_demo_role)):
 
 
 @router.get("/audit-events")
-def audit_events(encounter_id: UUID = Query(...), _role=Depends(require_demo_role)):
+def audit_events(encounter_id: UUID = Query(...), _role=Depends(_require_auditor)):
     with _connect() as connection:
         rows = connection.execute(
             """SELECT actor_role, action, object_type, object_id, correlation_id, metadata, created_at
@@ -70,10 +84,12 @@ def audit_events(encounter_id: UUID = Query(...), _role=Depends(require_demo_rol
 
 
 @router.get("/dashboard")
-def dashboard(_role=Depends(require_demo_role)):
+def dashboard(_role=Depends(_require_auditor)):
     with _connect() as connection:
         rows = connection.execute(
             """SELECT split_part(code, '_', 1) AS pain_point, state, count(*) AS count
-               FROM obligation_checks GROUP BY pain_point, state ORDER BY pain_point, state"""
+               FROM obligation_checks
+               GROUP BY split_part(code, '_', 1), state
+               ORDER BY pain_point, state"""
         ).fetchall()
     return {"items": [dict(row) for row in rows]}

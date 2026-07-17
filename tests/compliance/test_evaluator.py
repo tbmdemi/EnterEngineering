@@ -3,6 +3,18 @@ from pathlib import Path
 
 
 class ComplianceEvaluatorTest(unittest.TestCase):
+    def test_compliance_authorization_denies_patient(self):
+        from backend.app.core.contracts import Role
+        from backend.app.core.errors import AppError
+        from backend.app.features.compliance.router import _require_auditor, _require_staff
+
+        for guard in (_require_staff, _require_auditor):
+            with self.assertRaises(AppError) as caught:
+                guard(Role.PATIENT)
+            self.assertEqual(caught.exception.status_code, 403)
+        self.assertEqual(_require_staff(Role.DENTIST), Role.DENTIST)
+        self.assertEqual(_require_auditor(Role.QA), Role.QA)
+
     def test_compliance_routes_are_registered(self):
         root = Path(__file__).parents[2]
         backend = (root / "backend/app/main.py").read_text()
