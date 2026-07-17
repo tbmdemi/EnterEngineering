@@ -10,6 +10,7 @@ Care instructions, recall, complication task, release summary và chatbot ba int
 `backend/app/features/post_treatment_chat/`, `frontend/src/features/post-treatment-chat/`, `tests/post_treatment_chat/`, `db/init/50_post_treatment_chat.sql`.
 
 ## Consumes / produces
+React export bắt buộc: `export const route = { path, label, Component }`; integrator import vào `frontend/src/routes.js`.
 - Dùng encounter/evidence/task và core services.
 - Evidence: `POST_CARE_INSTRUCTIONS`, `POST_RECALL`, `POST_COMPLICATION_MONITORING`.
 - `POST /api/v1/encounters/{id}/release` → released summary.

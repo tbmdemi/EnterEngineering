@@ -23,7 +23,7 @@ ensure_task(encounter_id, obligation_code, task_type, owner_role, due_at, idempo
 append_audit(actor_role, action, object_type, object_id, encounter_id, metadata)
 ```
 
-Các module export một FastAPI `router` và một React `route`; integrator là người duy nhất nối registry/navigation. Policy cố định là `dental-policy.v1`.
+Các module export một FastAPI `router` và React `export const route = { path, label, Component }`; integrator import route vào `frontend/src/routes.js` và router vào app bootstrap. Policy cố định là `dental-policy.v1`.
 
 ## Timeline và Definition of Done
 

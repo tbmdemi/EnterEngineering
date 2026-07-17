@@ -10,6 +10,7 @@ Worklist theo role, acknowledge/complete, referral owner và appointment/chair o
 `backend/app/features/coordination/`, `frontend/src/features/coordination/`, `tests/coordination/`, `db/init/40_coordination.sql`.
 
 ## Consumes / produces
+React export bắt buộc: `export const route = { path, label, Component }`; integrator import vào `frontend/src/routes.js`.
 - Dùng core `tasks`, appointments, `ensure_task`, `append_audit`.
 - Evidence: `COORD_HANDOFF_ACK`, `COORD_REFERRAL_OWNER`, `COORD_SCHEDULE_CLEAR`.
 - `GET /api/v1/tasks?owner_role=...`; `POST /api/v1/tasks/{id}/acknowledge`; `POST /api/v1/tasks/{id}/complete`.

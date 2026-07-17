@@ -10,6 +10,7 @@ Form consent, treatment plan, progress note, medication detail có điều kiệ
 `backend/app/features/documentation_ai/`, `frontend/src/features/documentation-ai/`, `tests/documentation_ai/`, `db/init/20_documentation_ai.sql`.
 
 ## Consumes / produces
+React export bắt buộc: `export const route = { path, label, Component }`; integrator import vào `frontend/src/routes.js`.
 - Dùng encounter và core service `upsert_evidence`, `append_audit`.
 - Evidence: `DOC_CONSENT_SIGNED`, `DOC_TREATMENT_PLAN_SIGNED`, `DOC_PROGRESS_NOTE`, `DOC_MEDICATION_DETAILS`, `DOC_TOOTH_SURFACE`.
 - `POST /api/v1/ai/extract-note` → `{ai_run_id,facts:[{fact,tooth,surface,source_span}],state:"UNVERIFIED"}`.

@@ -10,6 +10,7 @@ Checklist medical history, allergy, vitals, sterilization và imaging có điề
 `backend/app/features/pre_treatment/`, `frontend/src/features/pre-treatment/`, `tests/pre_treatment/`, `db/init/30_pre_treatment.sql`.
 
 ## Consumes / produces
+React export bắt buộc: `export const route = { path, label, Component }`; integrator import vào `frontend/src/routes.js`.
 - Dùng encounter, `X-Demo-Role`, `upsert_evidence`, `append_audit`.
 - Evidence: `PRE_MEDICAL_HISTORY`, `PRE_ALLERGY`, `PRE_VITALS`, `PRE_STERILIZATION`, `PRE_IMAGING`.
 - `GET /api/v1/encounters/{id}/pre-treatment` → checklist hiện tại.

@@ -10,6 +10,7 @@ Hiển thị hồ sơ synthetic, header, năm stage và chỉ cho chuyển sang 
 `backend/app/features/encounter/`, `frontend/src/features/encounter/`, `tests/encounter/`, `db/init/10_encounter.sql` (chỉ khi thật sự cần).
 
 ## Consumes / produces
+React export bắt buộc: `export const route = { path, label, Component }`; integrator import vào `frontend/src/routes.js`.
 - Đọc core `patients`, `appointments`, `encounters`; dùng `EncounterStage` và `X-Demo-Role`.
 - `GET /api/v1/encounters/{id}` → patient, appointment, encounter, `stage`, `version`.
 - `POST /api/v1/encounters/{id}/stage` body `{stage, version}` → encounter mới; lỗi `{code,message,details}`.

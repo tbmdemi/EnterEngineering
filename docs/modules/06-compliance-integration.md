@@ -10,6 +10,7 @@ Policy cố định `dental-policy.v1`, readiness/evaluate, audit/dashboard, boo
 Toàn bộ shared/bootstrap/registry/navigation, `backend/app/features/compliance/`, `frontend/src/features/compliance/`, `tests/compliance/`, `db/init/60_compliance.sql`.
 
 ## Consumes / produces
+React export bắt buộc: `export const route = { path, label, Component }`; integrator import vào `frontend/src/routes.js`.
 - Consume mọi evidence code trong module 02–05 và core services.
 - `POST /api/v1/encounters/{id}/evaluate` → checks/tasks; `GET /api/v1/encounters/{id}/readiness` → grouped findings.
 - `GET /api/v1/audit-events`; `GET /api/v1/dashboard`.
