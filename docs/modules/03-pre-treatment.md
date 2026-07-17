@@ -26,6 +26,6 @@ React export bắt buộc: `export const route = { path, label, Component }`; in
 Thiếu allergy hoặc sterilization còn visible cho evaluator; mọi attestation có actor/time; procedure không cần phim cho phép imaging N/A.
 
 ## Handoff integrator
-Router export: ghi import path và prefix.
-Route export: ghi import path và URL.
-Verification: ghi lệnh test, evidence mẫu và commit hash.
+Router export: `backend.app.features.pre_treatment.router:router`, prefix `/api/v1/encounters`.
+Route export: `frontend/src/features/pre-treatment/index.jsx:route`, URL `/pre-treatment`.
+Verification: `python -m unittest tests.pre_treatment.test_pre_treatment`; mẫu `PRE_IMAGING={"not_applicable":true}`; commit được báo kèm bàn giao.
