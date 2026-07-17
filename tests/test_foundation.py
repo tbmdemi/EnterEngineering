@@ -85,6 +85,18 @@ class FoundationContractTest(unittest.TestCase):
         for spec in (ROOT / "docs/modules").glob("*.md"):
             self.assertIn(convention, spec.read_text(), spec.name)
 
+    def test_pre_treatment_is_registered_in_the_demo_shell(self):
+        from backend.app.main import app
+
+        paths = {route.path for route in app.routes}
+        self.assertIn("/api/v1/encounters/{encounter_id}/pre-treatment", paths)
+        self.assertIn("/api/v1/encounters/{encounter_id}/pre-treatment/{code}", paths)
+
+        registry = (ROOT / "frontend/src/routes.js").read_text()
+        app_source = (ROOT / "frontend/src/main.jsx").read_text()
+        self.assertIn("preTreatmentRoute", registry)
+        self.assertIn("window.location.pathname", app_source)
+
     def test_api_registers_validation_and_unhandled_error_boundaries(self):
         source = (ROOT / "backend/app/main.py").read_text()
         self.assertIn("RequestValidationError", source)

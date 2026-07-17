@@ -1,0 +1,42 @@
+<h2>Pre-treatment Safety — chọn layout demo</h2>
+<p class="subtitle">Mục tiêu là cho staff thấy ngay mục nào còn thiếu, ai đã xác nhận và imaging có áp dụng hay không.</p>
+
+<div class="cards">
+  <div class="card" data-choice="safety-gate" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">CareGuard Dental <span style="float:right">ASSISTANT</span></div>
+        <div class="mockup-body">
+          <p class="label">ENCOUNTER · PRE-TREATMENT</p>
+          <h3 style="margin:0">Safety gate</h3>
+          <p style="color:#b42318;background:#fef3f2;padding:.5rem;border-radius:.4rem">2 required checks remaining</p>
+          <div style="border:1px solid #ddd;padding:.55rem;border-radius:.4rem;margin:.35rem 0">✓ Medical history <small>ASSISTANT · 09:05</small></div>
+          <div style="border:1px solid #f04438;padding:.55rem;border-radius:.4rem;margin:.35rem 0">○ Allergy <button class="mock-button" style="float:right">Confirm</button></div>
+          <div style="border:1px solid #ddd;padding:.55rem;border-radius:.4rem;margin:.35rem 0">✓ Vitals <small>DENTIST · 09:08</small></div>
+          <div style="border:1px solid #f04438;padding:.55rem;border-radius:.4rem;margin:.35rem 0">○ Sterilization <button class="mock-button" style="float:right">Confirm</button></div>
+          <div style="border:1px dashed #98a2b3;padding:.55rem;border-radius:.4rem;margin:.35rem 0">— Imaging <small>Not applicable</small></div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>A. Safety gate</h3><p>Một trang checklist có trạng thái đỏ/xanh rõ ràng. Phù hợp nhất để demo “không được bỏ qua bước an toàn”.</p></div>
+  </div>
+
+  <div class="card" data-choice="stepper" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">CareGuard Dental <span style="float:right">ASSISTANT</span></div>
+        <div class="mockup-body">
+          <p class="label">STEP 2 OF 5 · PRE-TREATMENT</p>
+          <h3 style="margin:0">Allergy review</h3>
+          <p>Confirm the patient allergy status before treatment.</p>
+          <label><input class="mock-input" value="No known allergies" readonly></label>
+          <div style="margin-top:1rem"><button class="mock-button">Confirm allergy review</button></div>
+          <p style="margin-top:1.5rem;color:#667085">Medical history ✓ &nbsp; Allergy ● &nbsp; Vitals ○ &nbsp; Sterilization ○ &nbsp; Imaging N/A</p>
+        </div>
+      </div>
+    </div>
+    <div class="card-body"><h3>B. Step-by-step</h3><p>Mỗi mục là một bước riêng. Tập trung hơn cho nhập dữ liệu, nhưng chậm xem tổng thể và click nhiều hơn.</p></div>
+  </div>
+</div>
+
+<p class="subtitle">Click một phương án để lưu lựa chọn, rồi nhắn mình ở terminal.</p>

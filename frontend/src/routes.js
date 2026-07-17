@@ -1,2 +1,4 @@
 // Feature modules export: export const route = { path, label, Component }
-export const featureRoutes = [];
+import { route as preTreatmentRoute } from "./features/pre-treatment";
+
+export const featureRoutes = [preTreatmentRoute];

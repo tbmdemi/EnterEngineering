@@ -9,6 +9,18 @@ feature = importlib.import_module("backend.app.features.pre_treatment.router")
 
 
 class PreTreatmentTest(unittest.TestCase):
+    def test_attestation_rejects_unknown_checklist_code(self):
+        body = feature.Attestation(
+            value={"confirmed": True},
+            performed_at=datetime(2026, 7, 17, 2, tzinfo=timezone.utc),
+        )
+
+        with self.assertRaises(feature.AppError) as caught:
+            feature.put_attestation("enc", "PRE_UNKNOWN", body, Role.ASSISTANT)
+
+        self.assertEqual(caught.exception.status_code, 404)
+        self.assertEqual(caught.exception.payload["code"], "PRE_TREATMENT_CODE_INVALID")
+
     def test_checklist_keeps_missing_items_visible_and_marks_imaging_not_applicable(self):
         rows = [
             {"code": "PRE_PROCEDURE", "state": "VERIFIED", "value": {"requires_imaging": False}},
