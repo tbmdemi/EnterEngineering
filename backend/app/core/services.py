@@ -31,6 +31,14 @@ def upsert_evidence(encounter_id, code, state, value, source_type, source_ref, a
         return dict(connection.execute(query, (encounter_id, code, state, json.dumps(value), source_type, source_ref, actor_role)).fetchone())
 
 
+def clear_evidence(encounter_id, codes):
+    with _connect() as connection:
+        return connection.execute(
+            "DELETE FROM evidence_items WHERE encounter_id = %s AND code = ANY(%s)",
+            (encounter_id, list(codes)),
+        ).rowcount
+
+
 def ensure_task(encounter_id, obligation_code, task_type, owner_role, due_at, idempotency_key):
     query = """
         INSERT INTO tasks

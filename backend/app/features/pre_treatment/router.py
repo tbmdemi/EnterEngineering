@@ -36,6 +36,14 @@ def _requires_imaging(encounter_id):
     return value if value is True or value is False else None
 
 
+def _read_audit(encounter_id):
+    with services._connect() as connection:
+        return [dict(row) for row in connection.execute(
+            "SELECT actor_role, action, metadata, created_at FROM audit_events WHERE encounter_id = %s AND action LIKE 'PRE_TREATMENT_%%' ORDER BY created_at DESC",
+            (encounter_id,),
+        ).fetchall()]
+
+
 @router.get("/{encounter_id}/pre-treatment")
 def get_checklist(encounter_id: str, _role=Depends(dependencies.require_demo_role)):
     evidence = {row["code"]: row for row in _read_evidence(encounter_id)}
@@ -49,7 +57,17 @@ def get_checklist(encounter_id: str, _role=Depends(dependencies.require_demo_rol
             "evidence": evidence.get(code),
         }
         for code in CODES
-    ]}
+    ], "audit": _read_audit(encounter_id)}
+
+
+@router.post("/{encounter_id}/pre-treatment/demo-reset")
+def reset_demo(encounter_id: str, role=Depends(dependencies.require_demo_role)):
+    if role != Role.QA:
+        raise AppError("PRE_TREATMENT_RESET_FORBIDDEN", "Only QA can reset the demo scenario", {}, 403)
+    cleared = services.clear_evidence(encounter_id, CODES)
+    services.upsert_evidence(encounter_id, "PRE_PROCEDURE", "VERIFIED", {"requires_imaging": True}, "DEMO", "pre-treatment-demo", role.value)
+    services.append_audit(role.value, "PRE_TREATMENT_DEMO_RESET", "encounter", encounter_id, encounter_id, {"cleared_checks": cleared, "requires_imaging": True})
+    return get_checklist(encounter_id, role)
 
 
 @router.put("/{encounter_id}/pre-treatment/{code}")

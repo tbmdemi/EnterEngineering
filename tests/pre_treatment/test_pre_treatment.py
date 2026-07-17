@@ -27,7 +27,7 @@ class PreTreatmentTest(unittest.TestCase):
             {"code": "PRE_ALLERGY", "state": "VERIFIED", "value": {"answer": "none"}, "actor_role": "ASSISTANT", "updated_at": datetime.now(timezone.utc)},
         ]
 
-        with patch.object(feature, "_read_evidence", return_value=rows):
+        with patch.object(feature, "_read_evidence", return_value=rows), patch.object(feature, "_read_audit", return_value=[]):
             result = feature.get_checklist("encounter-1", Role.ASSISTANT)
 
         by_code = {item["code"]: item for item in result["items"]}
@@ -68,7 +68,7 @@ class PreTreatmentTest(unittest.TestCase):
         self.assertTrue(upsert.call_args.args[3]["not_applicable"])
 
     def test_unknown_procedure_keeps_imaging_applicable_and_preserves_attestation(self):
-        with patch.object(feature, "_read_evidence", return_value=[]):
+        with patch.object(feature, "_read_evidence", return_value=[]), patch.object(feature, "_read_audit", return_value=[]):
             result = feature.get_checklist("enc", Role.ASSISTANT)
         imaging = next(item for item in result["items"] if item["code"] == "PRE_IMAGING")
         self.assertTrue(imaging["applicable"])
@@ -95,6 +95,15 @@ class PreTreatmentTest(unittest.TestCase):
         rows = [{"code": "PRE_PROCEDURE", "state": "VERIFIED", "value": {}}]
         with patch.object(feature, "_read_evidence", return_value=rows):
             self.assertIsNone(feature._requires_imaging("enc"))
+
+    def test_qa_can_reset_the_demo_to_a_blank_imaging_required_scenario(self):
+        with patch.object(feature.services, "clear_evidence", return_value=5) as clear, patch.object(feature.services, "upsert_evidence") as upsert, patch.object(feature.services, "append_audit") as audit, patch.object(feature, "get_checklist", return_value={"items": []}):
+            result = feature.reset_demo("enc", Role.QA)
+
+        clear.assert_called_once_with("enc", feature.CODES)
+        upsert.assert_called_once_with("enc", "PRE_PROCEDURE", "VERIFIED", {"requires_imaging": True}, "DEMO", "pre-treatment-demo", "QA")
+        audit.assert_called_once_with("QA", "PRE_TREATMENT_DEMO_RESET", "encounter", "enc", "enc", {"cleared_checks": 5, "requires_imaging": True})
+        self.assertEqual(result, {"items": []})
 
 
 if __name__ == "__main__":
