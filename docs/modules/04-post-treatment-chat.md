@@ -26,6 +26,6 @@ React export bắt buộc: `export const route = { path, label, Component }`; in
 Patient không đọc draft; answer record có citation; ngoài nguồn abstain; red flag luôn escalation và không có chẩn đoán/đơn thuốc.
 
 ## Handoff integrator
-Router export: ghi import path và prefix.
-Route export: ghi import path và URL.
-Verification: ghi lệnh test, red-flag fixture và commit hash.
+Router export: `from backend.app.features.post_treatment_chat import router`; routes tự mang prefix `/api/v1`.
+Route export: `frontend/src/features/post-treatment-chat/index.jsx`; URL `/patient-chat`.
+Verification: `../compliance-integration/.venv/bin/python -m unittest discover -s tests -v` (13 pass); red flag `Tôi khó thở và sưng lan nhanh`; implementation `f8f89ff`.
