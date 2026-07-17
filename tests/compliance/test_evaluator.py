@@ -91,6 +91,7 @@ class ComplianceEvaluatorTest(unittest.TestCase):
         from backend.app.features.compliance.evaluator import desired_task_status, task_key
 
         key = task_key("enc-1", "PRE_ALLERGY")
+        self.assertEqual(desired_task_status("PENDING"), "OPEN")
         self.assertEqual(desired_task_status("MISSING"), "OPEN")
         self.assertEqual(desired_task_status("UNVERIFIED"), "OPEN")
         self.assertEqual(desired_task_status("SATISFIED"), "CANCELLED")

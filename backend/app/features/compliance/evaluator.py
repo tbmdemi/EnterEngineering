@@ -25,7 +25,7 @@ def derive_context(evidence_by_code):
 
 
 def desired_task_status(check_state):
-    return "OPEN" if check_state in {"MISSING", "UNVERIFIED"} else "CANCELLED"
+    return "OPEN" if check_state in {"PENDING", "MISSING", "UNVERIFIED"} else "CANCELLED"
 
 
 def evaluate(evidence_by_code, context=None):
@@ -38,11 +38,13 @@ def evaluate(evidence_by_code, context=None):
             state = "NOT_APPLICABLE"
         elif not evidence:
             state = "MISSING"
-        elif evidence["state"] == "DRAFT":
+        elif evidence.get("state") == "DRAFT":
             state = "UNVERIFIED"
-        elif obligation["code"] == "COORD_SCHEDULE_CLEAR" and evidence.get("value", {}).get("clear") is not True:
+        elif evidence.get("state") == "VERIFIED" and obligation["code"] == "COORD_SCHEDULE_CLEAR" and evidence.get("value", {}).get("clear") is not True:
             state = "MISSING"
-        else:
+        elif evidence.get("state") == "VERIFIED":
             state = "SATISFIED"
+        else:
+            state = "PENDING"
         checks.append({**obligation, "state": state, "policy_version": POLICY_VERSION})
     return checks
