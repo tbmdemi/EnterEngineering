@@ -2,13 +2,14 @@ import json
 import os
 import re
 import urllib.request
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field, model_validator
 
 from ...core.contracts import Role
+from ...core.errors import AppError
 from ...core.services import _connect, append_audit, upsert_evidence
 from ...dependencies import require_demo_role
 
@@ -39,7 +40,7 @@ class ExtractNoteInput(BaseModel):
 
 
 class Fact(BaseModel):
-    fact: str
+    fact: Literal["note_documented", "procedure_documented"]
     tooth: Optional[str] = None
     surface: Optional[str] = None
     source_span: str = Field(min_length=1)
@@ -52,7 +53,18 @@ class Extraction(BaseModel):
 
 
 class ReviewInput(BaseModel):
-    evidence_code: str = Field(pattern=r"^DOC_(CONSENT_SIGNED|TREATMENT_PLAN_SIGNED|PROGRESS_NOTE|MEDICATION_DETAILS|TOOTH_SURFACE)$")
+    evidence_code: Literal["DOC_PROGRESS_NOTE", "DOC_TOOTH_SURFACE"]
+
+
+FACT_EVIDENCE = {
+    "note_documented": "DOC_PROGRESS_NOTE",
+    "procedure_documented": "DOC_TOOTH_SURFACE",
+}
+
+
+def _require_role(role: Role, *allowed: Role):
+    if role not in allowed:
+        raise AppError("ROLE_FORBIDDEN", "Role is not allowed for this action", {"role": role.value}, 403)
 
 
 def _fixture(note: str) -> list[Fact]:
@@ -93,7 +105,7 @@ def _load_run(run_id: UUID):
     with _connect() as connection:
         row = connection.execute("SELECT * FROM ai_runs WHERE id = %s", (run_id,)).fetchone()
     if not row:
-        raise ValueError("AI run not found")
+        raise AppError("AI_RUN_NOT_FOUND", "AI run was not found", {"ai_run_id": str(run_id)}, 404)
     return dict(row)
 
 
@@ -104,6 +116,7 @@ def _mark_reviewed(run_id: UUID, status: str):
 
 @router.post("/api/v1/documentation")
 def save_documentation(data: DocumentationInput, role: Role = Depends(require_demo_role)):
+    _require_role(role, Role.ASSISTANT, Role.DENTIST)
     values = {
         "DOC_PROGRESS_NOTE": {"note": data.progress_note},
         "DOC_TOOTH_SURFACE": {"tooth": data.tooth, "surface": data.surface},
@@ -120,7 +133,8 @@ def save_documentation(data: DocumentationInput, role: Role = Depends(require_de
 
 
 @router.post("/api/v1/ai/extract-note", response_model=Extraction)
-def extract_note(data: ExtractNoteInput):
+def extract_note(data: ExtractNoteInput, role: Role = Depends(require_demo_role)):
+    _require_role(role, Role.ASSISTANT, Role.DENTIST)
     try:
         facts, model = _live_extract(data.note)
     except Exception:
@@ -131,9 +145,27 @@ def extract_note(data: ExtractNoteInput):
 
 @router.post("/api/v1/ai/runs/{run_id}/accept")
 def accept_run(run_id: UUID, review: ReviewInput, role: Role = Depends(require_demo_role)):
+    _require_role(role, Role.DENTIST)
     run = _load_run(run_id)
+    if not run:
+        raise AppError("AI_RUN_NOT_FOUND", "AI run was not found", {"ai_run_id": str(run_id)}, 404)
+    if run["status"] != "UNVERIFIED":
+        raise AppError("AI_RUN_ALREADY_REVIEWED", "AI run has already been reviewed", {"status": run["status"]}, 409)
     output = run["output"] if isinstance(run["output"], dict) else json.loads(run["output"])
-    evidence = upsert_evidence(run["encounter_id"], review.evidence_code, "VERIFIED", output, "AI_REVIEW", str(run_id), role.value)
+    try:
+        fact = Fact.model_validate(output["facts"][0])
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        raise AppError("AI_OUTPUT_INVALID", "AI output cannot be accepted", status_code=400) from error
+    expected_code = FACT_EVIDENCE[fact.fact]
+    if review.evidence_code != expected_code:
+        raise AppError("EVIDENCE_CODE_MISMATCH", "Evidence code does not match extracted fact", {"expected": expected_code}, 400)
+    value = {"source_span": fact.source_span}
+    if fact.fact == "procedure_documented":
+        if not fact.tooth or not fact.surface:
+            raise AppError("AI_OUTPUT_INVALID", "Procedure fact requires tooth and surface", status_code=400)
+        value.update(tooth=fact.tooth, surface=fact.surface)
+    # ponytail: review state and evidence use separate prototype transactions; move both into one shared transaction before concurrent reviewers are supported.
+    evidence = upsert_evidence(run["encounter_id"], expected_code, "VERIFIED", value, "AI_REVIEW", str(run_id), role.value)
     _mark_reviewed(run_id, "ACCEPTED")
     append_audit(role.value, "AI_RUN_ACCEPTED", "ai_run", run_id, run["encounter_id"], {"evidence_code": review.evidence_code})
     return {"ai_run_id": str(run_id), "state": "VERIFIED", "evidence_id": str(evidence.get("id", ""))}
@@ -141,7 +173,12 @@ def accept_run(run_id: UUID, review: ReviewInput, role: Role = Depends(require_d
 
 @router.post("/api/v1/ai/runs/{run_id}/reject")
 def reject_run(run_id: UUID, role: Role = Depends(require_demo_role)):
+    _require_role(role, Role.DENTIST)
     run = _load_run(run_id)
+    if not run:
+        raise AppError("AI_RUN_NOT_FOUND", "AI run was not found", {"ai_run_id": str(run_id)}, 404)
+    if run["status"] != "UNVERIFIED":
+        raise AppError("AI_RUN_ALREADY_REVIEWED", "AI run has already been reviewed", {"status": run["status"]}, 409)
     _mark_reviewed(run_id, "REJECTED")
     append_audit(role.value, "AI_RUN_REJECTED", "ai_run", run_id, run["encounter_id"], {})
     return {"ai_run_id": str(run_id), "state": "REJECTED"}
