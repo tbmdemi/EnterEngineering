@@ -32,7 +32,8 @@ def _requires_imaging(encounter_id):
     procedure = next((row for row in _read_evidence(encounter_id) if row["code"] == "PRE_PROCEDURE"), None)
     if not procedure or procedure["state"] != "VERIFIED" or "requires_imaging" not in procedure["value"]:
         return None
-    return procedure["value"]["requires_imaging"] is True
+    value = procedure["value"]["requires_imaging"]
+    return value if value is True or value is False else None
 
 
 @router.get("/{encounter_id}/pre-treatment")

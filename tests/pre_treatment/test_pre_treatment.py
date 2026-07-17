@@ -74,6 +74,16 @@ class PreTreatmentTest(unittest.TestCase):
             feature.put_attestation("enc", "PRE_ALLERGY", body, Role.ASSISTANT)
         self.assertEqual(upsert.call_args.args[3]["performed_at"], "2026-07-17T02:00:00+00:00")
 
+    def test_requires_imaging_treats_null_and_malformed_values_as_unknown(self):
+        for value in (None, 0, "false"):
+            rows = [{"code": "PRE_PROCEDURE", "state": "VERIFIED", "value": {"requires_imaging": value}}]
+            with self.subTest(value=value), patch.object(feature, "_read_evidence", return_value=rows):
+                self.assertIsNone(feature._requires_imaging("enc"))
+
+        rows = [{"code": "PRE_PROCEDURE", "state": "VERIFIED", "value": {}}]
+        with patch.object(feature, "_read_evidence", return_value=rows):
+            self.assertIsNone(feature._requires_imaging("enc"))
+
 
 if __name__ == "__main__":
     unittest.main()
