@@ -67,6 +67,13 @@ def _require_role(role: Role, *allowed: Role):
         raise AppError("ROLE_FORBIDDEN", "Role is not allowed for this action", {"role": role.value}, 403)
 
 
+def _raise_review_error(connection, run_id: UUID):
+    existing = connection.execute("SELECT status FROM ai_runs WHERE id = %s", (run_id,)).fetchone()
+    if not existing:
+        raise AppError("AI_RUN_NOT_FOUND", "AI run was not found", {"ai_run_id": str(run_id)}, 404)
+    raise AppError("AI_RUN_ALREADY_REVIEWED", "AI run has already been reviewed", {"status": existing["status"]}, 409)
+
+
 def _fixture(note: str) -> list[Fact]:
     match = re.search(r"[^.]*\btooth\s+(\w+)\s+surface\s+(\w+)\b[^.]*\.", note, re.IGNORECASE)
     if match:
@@ -139,7 +146,7 @@ def accept_run(run_id: UUID, review: ReviewInput, role: Role = Depends(require_d
             (run_id,),
         ).fetchone()
         if not run:
-            raise AppError("AI_RUN_ALREADY_REVIEWED", "AI run is missing or has already been reviewed", {"ai_run_id": str(run_id)}, 409)
+            _raise_review_error(connection, run_id)
         output = run["output"] if isinstance(run["output"], dict) else json.loads(run["output"])
         try:
             fact = Fact.model_validate(output["facts"][0])
@@ -177,7 +184,7 @@ def reject_run(run_id: UUID, role: Role = Depends(require_demo_role)):
             (run_id,),
         ).fetchone()
         if not run:
-            raise AppError("AI_RUN_ALREADY_REVIEWED", "AI run is missing or has already been reviewed", {"ai_run_id": str(run_id)}, 409)
+            _raise_review_error(connection, run_id)
         connection.execute(
             "INSERT INTO audit_events (actor_role, action, object_type, object_id, encounter_id, metadata) VALUES (%s,'AI_RUN_REJECTED','ai_run',%s,%s,'{}'::jsonb) RETURNING id",
             (role.value, run_id, run["encounter_id"]),

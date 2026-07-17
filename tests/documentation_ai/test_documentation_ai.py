@@ -86,22 +86,29 @@ class DocumentationAiTest(unittest.TestCase):
         self.assertIn("INSERT INTO audit_events", connection.calls[2][0])
         self.assertEqual(connection.calls[1][1][2], '{"source_span": "Tooth 14 surface O restored.", "tooth": "14", "surface": "O"}')
 
-    def test_conditional_review_conflicts_without_partial_work(self):
+    def test_conditional_review_distinguishes_missing_from_already_reviewed(self):
         from backend.app.core.contracts import Role
         from backend.app.core.errors import AppError
-        from backend.app.features.documentation_ai.api import reject_run
+        from backend.app.features.documentation_ai.api import ReviewInput, accept_run, reject_run
 
         class Connection:
-            calls = 0
-            def execute(self, _query, _params): self.calls += 1; return self
-            def fetchone(self): return None
-        connection = Connection()
-        @contextmanager
-        def connect(): yield connection
-        with patch("backend.app.features.documentation_ai.api._connect", connect), self.assertRaises(AppError) as conflict:
-            reject_run("00000000-0000-0000-0000-000000000010", Role.DENTIST)
-        self.assertEqual(conflict.exception.status_code, 409)
-        self.assertEqual(connection.calls, 1)
+            def __init__(self, existing):
+                self.calls, self.rows = [], iter([None, {"status": "ACCEPTED"} if existing else None])
+            def execute(self, query, params): self.calls.append((query, params)); return self
+            def fetchone(self): return next(self.rows)
+        for existing, action, status, code in (
+            (False, lambda: reject_run("00000000-0000-0000-0000-000000000010", Role.DENTIST), 404, "AI_RUN_NOT_FOUND"),
+            (True, lambda: accept_run("00000000-0000-0000-0000-000000000010", ReviewInput(evidence_code="DOC_PROGRESS_NOTE"), Role.DENTIST), 409, "AI_RUN_ALREADY_REVIEWED"),
+        ):
+            connection = Connection(existing)
+            @contextmanager
+            def connect(): yield connection
+            with self.subTest(existing=existing), patch("backend.app.features.documentation_ai.api._connect", connect), self.assertRaises(AppError) as error:
+                action()
+            self.assertEqual(error.exception.status_code, status)
+            self.assertEqual(error.exception.payload["code"], code)
+            self.assertEqual(len(connection.calls), 2)
+            self.assertIn("SELECT status FROM ai_runs", connection.calls[1][0])
 
     def test_mid_review_failure_exits_the_same_transaction_with_exception(self):
         from backend.app.core.contracts import Role
