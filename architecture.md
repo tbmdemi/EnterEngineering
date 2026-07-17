@@ -2,13 +2,13 @@
 
 > Phiên bản: 1.0
 > Ngày: 17/07/2026
-> Tài liệu liên quan: [Đặc tả sản phẩm](2026-07-17-clinical-compliance-copilot-design.md), [Đặc tả database](2026-07-17-careguard-database-design.md)
+> Tài liệu liên quan: [Đặc tả sản phẩm](design.md), [Đặc tả database](database.md)
 
 ## 1. Mục tiêu kiến trúc
 
 Kiến trúc phải chứng minh được ba điều:
 
-1. CareGuard nhúng vào quy trình hiện có, không thay HIS/EHR.
+1. CareGuard là system of record cho HIS/EHR/PMS của phòng khám và cung cấp Patient Portal.
 2. AI tìm evidence và giải thích; deterministic rule cùng con người giữ quyền quyết định.
 3. Mọi kết luận có thể tái hiện từ policy version, dữ liệu nguồn và audit trail.
 
@@ -18,31 +18,35 @@ MVP là một modular monolith với một worker và PostgreSQL. Đây là ranh
 
 ```mermaid
 flowchart LR
-    Staff[Clinic Staff] --> Web[CareGuard Web/Sidebar]
+    Staff[Clinic Staff] --> Web[Staff Web]
+    Patient[Patient / Proxy] --> Portal[Patient Portal]
     Admin[Clinical & Compliance Admin] --> Web
-    Source[HIS/EHR/PMS or Mock JSON] --> Adapter[Integration Adapter]
+    Device[Lab / Imaging / External System] --> Adapter[Integration Adapter]
     Adapter --> Core[CareGuard Core]
     Web --> Core
+    Portal --> Core
     Core --> Model[Approved AI Model API]
-    Core --> Source
-    Core --> Notify[Existing Notification/Scheduling Channel]
+    Core --> Device
+    Core --> Notify[SMS / Email / Payment Gateway]
 ```
 
-External systems remain authoritative for patient identity, signed clinical documents, results, appointments and prescriptions. CareGuard stores references, evaluation state, tasks and audit metadata.
+CareGuard là nguồn chính cho patient, appointment, encounter, clinical resources, billing và portal access. Lab, PACS/DICOMweb, payment gateway hoặc hệ thống khác vẫn là nguồn của artifact do chính chúng phát hành; CareGuard ingest, đối soát và giữ provenance.
 
 ## 3. Container architecture
 
 ```mermaid
 flowchart TB
-    Browser[Responsive Web / Embedded Sidebar]
+    Browser[Staff Web]
+    Portal[Patient Portal]
     API[CareGuard API - Modular Monolith]
     Worker[Background Worker]
     DB[(PostgreSQL)]
-    Object[(Encrypted Object Storage - optional)]
     LLM[Model Gateway / LLM Provider]
-    Source[Mock JSON / HIS / FHIR]
+    Object[(Object Storage / DICOMweb)]
+    Source[Lab / PACS / Payment / FHIR]
 
     Browser -->|HTTPS JSON| API
+    Portal -->|HTTPS JSON| API
     Source -->|JSON/FHIR/Webhook| API
     API --> DB
     API -->|enqueue DB job| DB
@@ -61,21 +65,28 @@ flowchart TB
 - Resolve/Not applicable/Override.
 - Policy editor/review/publish cho admin.
 - Dashboard tổng hợp không lộ PHI.
+- Patient chart, scheduling/check-in/queue, clinical documentation và billing.
+- Odontogram và dental treatment plan.
+- Patient Portal cho appointment, forms/consent, released records, messaging và payment.
 
-Không xây patient portal, chat platform hoặc rich clinical editor trong MVP.
+Không xây realtime chat platform hoặc rich clinical editor riêng trong MVP; portal dùng secure message thread và form/resource viewer hiện có.
 
 ### 3.2 API modular monolith
 
 | Module | Trách nhiệm |
 | --- | --- |
 | Identity & Access | Xác thực token, tenant context, role/permission |
-| Encounter | Patient reference, encounter và timeline |
+| Patient & Access | Patient master, identifiers, proxy grant và release policy |
+| Scheduling/PMS | Service, schedule, appointment, queue, invoice và payment |
+| EHR | Encounter, clinical resource, version, signature và amendment |
+| Dental | Odontogram/tooth-surface findings và procedure links |
 | Policy | Policy Pack lifecycle, rule validation, version selection |
 | Evidence | Thu nhận structured evidence và AI-extracted evidence |
 | Compliance | Applicability, obligation state và finding |
 | Task | Owner, handoff, SLA, escalation và completion |
-| Integration | Mock/FHIR adapter, idempotency, ACK và reconciliation |
-| AI Gateway | Model allowlist, schema, timeout, citation và abstain |
+| Media | Upload metadata, consent, object storage/DICOMweb và retention |
+| Integration | Lab/PACS/payment/FHIR adapter, idempotency, ACK và reconciliation |
+| AI Gateway | Summary, note/conversation/image extraction, model allowlist, citation và abstain |
 | Audit | Append-only security/business audit |
 | Analytics | Aggregate KPI từ operational data |
 
@@ -88,11 +99,13 @@ Worker xử lý:
 - Ingest/reconciliation không đồng bộ.
 - Re-evaluation khi timeline thay đổi.
 - AI evidence extraction.
+- Record summary generation và multimodal extraction.
+- Media scan/metadata processing và retention.
 - Task escalation.
 - Notification handoff.
 - Retention/deletion jobs.
 
-Queue MVP dùng bảng `integration_jobs`/job table với `FOR UPDATE SKIP LOCKED`. Chỉ thêm broker khi throughput hoặc fan-out đo được vượt khả năng DB queue.
+Queue MVP dùng bảng `jobs` với `FOR UPDATE SKIP LOCKED`. Chỉ thêm broker khi throughput hoặc fan-out đo được vượt khả năng DB queue.
 
 ## 4. Luồng runtime
 
@@ -168,7 +181,7 @@ AI output không trực tiếp cập nhật final obligation state. Rule engine 
 3. Nhóm finding theo Must resolve, Needs review, Follow-up.
 4. User sửa dữ liệu nguồn hoặc ghi human decision.
 5. Re-evaluate và trả trạng thái mới.
-6. Chỉ source system đóng hồ sơ; CareGuard ghi ACK và audit.
+6. CareGuard đóng encounter sau authorization, validation và signature; hệ thống ngoài chỉ nhận event/ACK khi được tích hợp.
 
 ### 4.5 Follow-up và escalation
 
@@ -204,14 +217,20 @@ AI output không trực tiếp cập nhật final obligation state. Rule engine 
 }
 ```
 
-Ba fixture chỉ thay specialty, encounter type và facts. Production adapter map FHIR/HIS data vào contract này.
+Bốn fixture (ENT, Dermatology, Gynecology, Dental) dùng cùng import contract. Đây là seed/demo path; production UI/API tạo dữ liệu trực tiếp trong CareGuard và adapter dùng cho hệ thống ngoài.
 
 ### 5.2 API surface MVP
 
 | Method | Endpoint | Mục đích |
 | --- | --- | --- |
 | POST | `/api/v1/events` | Ingest mock/webhook event idempotently |
+| POST/GET | `/api/v1/patients` | Patient master và search theo quyền |
+| POST/GET | `/api/v1/appointments` | Booking và patient self-service |
+| POST | `/api/v1/appointments/{id}/check-in` | Tạo/ghép encounter idempotently |
 | GET | `/api/v1/encounters/{id}` | Encounter overview |
+| POST/GET | `/api/v1/encounters/{id}/resources` | Clinical resource/version |
+| POST | `/api/v1/artifacts` | Upload note/audio/image metadata bằng signed URL |
+| POST | `/api/v1/ai/summaries` | Tạo summary Draft có citations |
 | GET | `/api/v1/encounters/{id}/readiness` | Obligations/findings/tasks hiện tại |
 | POST | `/api/v1/encounters/{id}/evaluate` | Full pre-close evaluation |
 | POST | `/api/v1/findings/{id}/decisions` | Resolve/not-applicable/override |
@@ -221,6 +240,8 @@ Ba fixture chỉ thay specialty, encounter type và facts. Production adapter ma
 | GET | `/api/v1/policy-packs` | Danh sách/version |
 | POST | `/api/v1/policy-packs/{id}/versions/{v}/publish` | Publish có authorization |
 | GET | `/api/v1/audit-events` | Search audit theo quyền |
+| GET | `/api/v1/portal/me/records` | Resource đã release theo patient/proxy grant |
+| POST | `/api/v1/invoices/{id}/payments` | Payment intent/callback idempotent |
 
 POST có side effect yêu cầu `Idempotency-Key`. PATCH/decision dùng encounter/finding version để tránh lost update.
 
@@ -258,6 +279,8 @@ Không thực thi JavaScript/Python hoặc SQL được lưu trong policy. Polic
 - Model provider không có DB/network access.
 - AI output luôn là untrusted input cần schema validation.
 - Analytics không đọc raw clinical text.
+- Patient Portal là trust boundary riêng; patient/proxy không dùng staff API scope.
+- Object storage/PACS không public; truy cập qua short-lived signed URL và audit.
 
 ### Controls
 
@@ -276,6 +299,9 @@ Không thực thi JavaScript/Python hoặc SQL được lưu trong policy. Polic
 | --- | --- |
 | AI timeout | Mark run failed/abstained; deterministic checklist vẫn hoạt động |
 | Source unavailable | Hiển thị stale state; queue retry; không báo Synced |
+| Media scan/model lỗi | Quarantine hoặc abstain; không phát hành output |
+| Proxy revoked | Revoke grant/session cache; deny lần đọc tiếp theo |
+| Payment callback lặp | Idempotency trả kết quả cũ; không ghi nhận tiền hai lần |
 | Duplicate event | Unique constraint trả kết quả cũ, không chạy side effect trùng |
 | Conflicting event | Lưu conflict finding; không overwrite im lặng |
 | Worker crash | Job lease hết hạn và worker khác nhận lại idempotently |
@@ -288,7 +314,7 @@ Không thực thi JavaScript/Python hoặc SQL được lưu trong policy. Polic
 ### Prototype
 
 ```text
-1 web container
+1 web container với staff/portal route groups và authorization tách biệt
 1 API container
 1 worker container
 1 PostgreSQL instance
@@ -353,14 +379,19 @@ Chỉ nâng cấp khi có số đo:
 | ADR-002 | PostgreSQL job queue | Không thêm broker trước khi có throughput cần thiết |
 | ADR-003 | Deterministic compliance engine | Tái hiện được và không trao hard-stop cho LLM |
 | ADR-004 | AI evidence là Unverified mặc định | Ngăn automation bias |
-| ADR-005 | Source system giữ quyền ghi lâm sàng | CareGuard không trở thành EHR |
+| ADR-005 | CareGuard giữ patient/appointment/clinical/billing core | Đảm nhiệm HIS/EHR/PMS; external artifact vẫn có provenance |
 | ADR-006 | Version mọi policy/model/prompt | Audit và rollback |
-| ADR-007 | One shared engine, three Policy Packs | Tránh ba implementation khác nhau |
-| ADR-008 | Mock JSON contract trước, FHIR adapter sau | Demo ổn định và giữ đường nâng cấp rõ |
+| ADR-007 | One shared engine, four Policy Packs | Tránh implementation riêng cho từng chuyên khoa |
+| ADR-008 | Core model nội bộ + FHIR-shaped clinical resources | Không cần một bảng cho từng specialty nhưng vẫn liên thông được |
+| ADR-009 | Media ngoài PostgreSQL | Tránh DB phình và dùng native object/PACS lifecycle |
+| ADR-010 | Staff/Patient cùng identity, khác grants/scopes | Không tạo hai hệ đăng nhập và tránh proxy dùng chung tài khoản |
 
 ## 13. Definition of Done kiến trúc
 
-- Ba fixtures đi qua cùng ingest/evaluation path.
+- Bốn specialty fixtures đi qua cùng clinical/compliance path.
+- Staff và patient/proxy flows đều enforce release/grant ở backend/RLS.
+- Appointment chống double booking; signed resource bất biến; payment callback idempotent.
+- Summary/note/conversation/image AI output có source links và human review.
 - Không có module hoặc model nào bypass authorization/audit.
 - Rule engine chạy không cần AI.
 - AI failure không chặn checklist/manual workflow.
