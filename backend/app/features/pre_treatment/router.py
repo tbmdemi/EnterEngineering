@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict
 
 from fastapi import APIRouter, Depends
@@ -30,18 +30,21 @@ def _read_evidence(encounter_id):
 
 def _requires_imaging(encounter_id):
     procedure = next((row for row in _read_evidence(encounter_id) if row["code"] == "PRE_PROCEDURE"), None)
-    return bool(procedure and procedure["value"].get("requires_imaging"))
+    if not procedure or procedure["state"] != "VERIFIED" or "requires_imaging" not in procedure["value"]:
+        return None
+    return procedure["value"]["requires_imaging"] is True
 
 
 @router.get("/{encounter_id}/pre-treatment")
 def get_checklist(encounter_id: str, _role=Depends(dependencies.require_demo_role)):
     evidence = {row["code"]: row for row in _read_evidence(encounter_id)}
-    requires_imaging = bool(evidence.get("PRE_PROCEDURE", {}).get("value", {}).get("requires_imaging"))
+    procedure = evidence.get("PRE_PROCEDURE")
+    requires_imaging = procedure["value"].get("requires_imaging") if procedure and procedure["state"] == "VERIFIED" else None
     return {"encounter_id": encounter_id, "items": [
         {
             "code": code,
-            "applicable": code != "PRE_IMAGING" or requires_imaging,
-            "suggested_obligation_state": "NOT_APPLICABLE" if code == "PRE_IMAGING" and not requires_imaging else None,
+            "applicable": code != "PRE_IMAGING" or requires_imaging is not False,
+            "suggested_obligation_state": "NOT_APPLICABLE" if code == "PRE_IMAGING" and requires_imaging is False else None,
             "evidence": evidence.get(code),
         }
         for code in CODES
@@ -57,9 +60,9 @@ def put_attestation(encounter_id: str, code: str, body: Attestation, role=Depend
     if body.performed_at.tzinfo is None or body.performed_at.utcoffset() is None:
         raise AppError("PERFORMED_AT_TIMEZONE_REQUIRED", "performed_at must include a timezone", {}, 422)
 
-    performed_at = body.performed_at.isoformat()
+    performed_at = body.performed_at.astimezone(timezone.utc).isoformat()
     value = {**body.value, "performed_at": performed_at}
-    if code == "PRE_IMAGING" and not _requires_imaging(encounter_id):
+    if code == "PRE_IMAGING" and _requires_imaging(encounter_id) is False:
         value = {"not_applicable": True, "performed_at": performed_at}
     evidence = services.upsert_evidence(encounter_id, code, "VERIFIED", value, "FORM", "pre-treatment", role.value)
     services.append_audit(role.value, "PRE_TREATMENT_ATTESTED", "evidence", evidence["id"], encounter_id, {"code": code, "performed_at": performed_at})
