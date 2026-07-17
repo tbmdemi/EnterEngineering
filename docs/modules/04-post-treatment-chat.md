@@ -27,5 +27,5 @@ Patient không đọc draft; answer record có citation; ngoài nguồn abstain;
 
 ## Handoff integrator
 Router export: `from backend.app.features.post_treatment_chat import router`; routes tự mang prefix `/api/v1`.
-Route export: `frontend/src/features/post-treatment-chat/index.jsx`; URL `/patient-chat`.
-Verification: `../compliance-integration/.venv/bin/python -m unittest discover -s tests -v` (13 pass); red flag `Tôi khó thở và sưng lan nhanh`; implementation `f8f89ff`.
+Route export: `frontend/src/features/post-treatment-chat/index.jsx`; URL `/post-treatment`.
+Verification: `../compliance-integration/.venv/bin/python -m unittest discover -s tests -v` (15 pass); red flag `Tôi khó thở và sưng lan nhanh`; review fix `3cc084a`.
