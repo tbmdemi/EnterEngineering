@@ -13,6 +13,7 @@ from .service import advance_stage, get_encounter
 
 router = APIRouter(prefix="/api/v1/encounters", tags=["encounter"])
 STAGE_WRITERS = {Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST}
+STAFF_READERS = {Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST, Role.QA}
 
 
 class StageChange(BaseModel):
@@ -22,6 +23,8 @@ class StageChange(BaseModel):
 
 @router.get("/{encounter_id}")
 def encounter(encounter_id: UUID, _role=Depends(require_demo_role)):
+    if _role not in STAFF_READERS:
+        raise AppError("ROLE_FORBIDDEN", "Staff role is required", {"role": _role.value}, 403)
     return get_encounter(encounter_id)
 
 

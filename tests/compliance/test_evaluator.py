@@ -23,6 +23,23 @@ class ComplianceEvaluatorTest(unittest.TestCase):
         self.assertIn("compliance.router", backend)
         self.assertIn("complianceRoute", frontend)
 
+    def test_unknown_encounter_is_rejected_before_compliance_write(self):
+        from contextlib import contextmanager
+        from unittest.mock import patch
+        from backend.app.core.contracts import Role
+        from backend.app.core.errors import AppError
+        import importlib
+        router = importlib.import_module("backend.app.features.compliance.router")
+
+        class Connection:
+            def execute(self, _query, _params): return self
+            def fetchone(self): return None
+        @contextmanager
+        def connect(): yield Connection()
+        with patch.object(router, "_connect", connect), self.assertRaises(AppError) as caught:
+            router.evaluate_encounter("00000000-0000-0000-0000-000000000404", Role.DENTIST)
+        self.assertEqual(caught.exception.status_code, 404)
+
     def test_compliance_ui_exposes_evaluate_readiness_audit_and_dashboard(self):
         root = Path(__file__).parents[2]
         source = (root / "frontend/src/features/compliance/index.jsx").read_text()
@@ -60,6 +77,15 @@ class ComplianceEvaluatorTest(unittest.TestCase):
 
         self.assertEqual(result["DOC_MEDICATION_DETAILS"]["state"], "MISSING")
         self.assertEqual(result["PRE_IMAGING"]["state"], "MISSING")
+
+    def test_failed_schedule_check_is_missing_not_satisfied(self):
+        from backend.app.features.compliance.evaluator import evaluate
+
+        result = {item["code"]: item for item in evaluate({
+            "COORD_SCHEDULE_CLEAR": {"state": "VERIFIED", "value": {"clear": False}},
+        })}
+
+        self.assertEqual(result["COORD_SCHEDULE_CLEAR"]["state"], "MISSING")
 
     def test_task_reconciliation_reopens_and_cancels_with_same_key(self):
         from backend.app.features.compliance.evaluator import desired_task_status, task_key

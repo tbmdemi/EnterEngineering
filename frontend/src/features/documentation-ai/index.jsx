@@ -2,7 +2,7 @@ import React, { useState } from "react";
 
 function DocumentationAi() {
   const [run, setRun] = useState(null);
-  const [encounterId, setEncounterId] = useState("");
+  const [encounterId, setEncounterId] = useState("00000000-0000-0000-0000-000000000003");
   const [note, setNote] = useState("");
   const [medicationPrescribed, setMedicationPrescribed] = useState(false);
   const [saved, setSaved] = useState(false);

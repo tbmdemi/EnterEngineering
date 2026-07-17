@@ -34,6 +34,11 @@ class FakeConnection:
 
 
 class EncounterTest(unittest.TestCase):
+    def test_patient_cannot_read_internal_encounter_context(self):
+        with self.assertRaises(AppError) as caught:
+            encounter_router.encounter(CONTEXT["id"], Role.PATIENT)
+        self.assertEqual(caught.exception.status_code, 403)
+
     def connection(self, rows):
         connection = FakeConnection(rows)
 

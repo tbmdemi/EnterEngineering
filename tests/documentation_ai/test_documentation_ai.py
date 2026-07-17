@@ -18,18 +18,34 @@ class DocumentationAiTest(unittest.TestCase):
             DocumentationInput(**common, medication_prescribed=True)
         self.assertEqual(DocumentationInput(**common, medication_prescribed=True, medication_detail="Lidocaine").medication_detail, "Lidocaine")
 
-    def test_documentation_form_persists_expected_evidence(self):
+    def test_documentation_form_persists_expected_evidence_and_removes_unchecked_state(self):
         from backend.app.core.contracts import Role
         from backend.app.features.documentation_ai.api import DocumentationInput, save_documentation
 
         data = DocumentationInput(encounter_id="00000000-0000-0000-0000-000000000001", consent_signed=True,
                                   treatment_plan_signed=True, progress_note="Completed.", tooth="14", surface="O",
                                   medication_prescribed=True, medication_detail="Lidocaine")
-        with patch("backend.app.features.documentation_ai.api.upsert_evidence") as upsert:
+        class Connection:
+            def __init__(self): self.calls = []
+            def execute(self, query, params): self.calls.append((query, params)); return self
+        connection = Connection()
+        @contextmanager
+        def connect(): yield connection
+        with patch("backend.app.features.documentation_ai.api._connect", connect):
             result = save_documentation(data, Role.DENTIST)
-        self.assertEqual(upsert.call_count, 6)
+        self.assertEqual(sum("INSERT INTO evidence_items" in call[0] for call in connection.calls), 6)
+        self.assertIn("DELETE FROM evidence_items", connection.calls[-2][0])
+        self.assertIn("INSERT INTO audit_events", connection.calls[-1][0])
         self.assertIn("DOC_MEDICATION_DETAILS", result["evidence_codes"])
         self.assertIn("DOC_MEDICATION_PRESCRIBED", result["evidence_codes"])
+
+        data = DocumentationInput(encounter_id="00000000-0000-0000-0000-000000000001", consent_signed=False,
+                                  treatment_plan_signed=False, progress_note="Completed.", tooth="14", surface="O")
+        connection = Connection()
+        with patch("backend.app.features.documentation_ai.api._connect", connect):
+            save_documentation(data, Role.DENTIST)
+        deleted_codes = connection.calls[-2][1][1]
+        self.assertEqual(set(deleted_codes), {"DOC_CONSENT_SIGNED", "DOC_TREATMENT_PLAN_SIGNED", "DOC_MEDICATION_DETAILS"})
 
     def test_fixture_has_exact_source_span(self):
         from backend.app.core.contracts import Role

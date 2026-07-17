@@ -3,6 +3,10 @@ import os
 from contextlib import contextmanager
 
 
+def _json(value):
+    return json.dumps(value, default=str)
+
+
 @contextmanager
 def _connect():
     """Open one short transaction; import stays lazy for contract-only tooling."""
@@ -28,7 +32,7 @@ def upsert_evidence(encounter_id, code, state, value, source_type, source_ref, a
         RETURNING *
     """
     with _connect() as connection:
-        return dict(connection.execute(query, (encounter_id, code, state, json.dumps(value), source_type, source_ref, actor_role)).fetchone())
+        return dict(connection.execute(query, (encounter_id, code, state, _json(value), source_type, source_ref, actor_role)).fetchone())
 
 
 def ensure_task(encounter_id, obligation_code, task_type, owner_role, due_at, idempotency_key):
@@ -52,4 +56,4 @@ def append_audit(actor_role, action, object_type, object_id, encounter_id, metad
         RETURNING *
     """
     with _connect() as connection:
-        return dict(connection.execute(query, (actor_role, action, object_type, object_id, encounter_id, json.dumps(metadata))).fetchone())
+        return dict(connection.execute(query, (actor_role, action, object_type, object_id, encounter_id, _json(metadata))).fetchone())

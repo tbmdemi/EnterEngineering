@@ -6,6 +6,8 @@ function Coordination() {
   const [role, setRole] = useState("ASSISTANT");
   const [tasks, setTasks] = useState([]);
   const [message, setMessage] = useState("");
+  const [evaluation, setEvaluation] = useState(null);
+  const encounterId = "00000000-0000-0000-0000-000000000003";
 
   const load = () => fetch(`/api/v1/tasks?owner_role=${role}`, { headers: { "X-Demo-Role": role } })
     .then(async response => {
@@ -27,9 +29,19 @@ function Coordination() {
     load();
   }).catch(error => setMessage(error.message));
 
+  const evaluate = () => fetch(`/api/v1/encounters/${encounterId}/coordination/evaluate`, {
+    method: "POST", headers: { "X-Demo-Role": role },
+  }).then(async response => {
+    const body = await response.json();
+    if (!response.ok) throw new Error(body.message || "Không thể kiểm tra lịch");
+    setEvaluation(body); load();
+  }).catch(error => setMessage(error.message));
+
   return <section aria-labelledby="coordination-title">
     <h2 id="coordination-title">Coordination worklist</h2>
     <label>Vai trò <select value={role} onChange={event => setRole(event.target.value)}>{ROLES.map(value => <option key={value}>{value}</option>)}</select></label>
+    <button type="button" onClick={evaluate}>Evaluate schedule</button>
+    {evaluation && <p>Lịch {evaluation.schedule_clear ? "không xung đột" : `có ${evaluation.conflicts.length} xung đột`}.</p>}
     {message && <p role="alert">{message}</p>}
     {!tasks.length && !message ? <p>Không có việc đang chờ.</p> : <ul>{tasks.map(task => <li key={task.id}>
       <strong>{task.task_type}</strong> — {task.status}

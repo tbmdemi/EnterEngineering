@@ -26,5 +26,5 @@ Kết quả tái hiện được; draft không satisfied; evaluate lặp không 
 
 ## Handoff integrator
 Merged commits: encounter `20681fc`, documentation-AI `9df7d21`, pre-treatment `01bcf0b`, coordination `63a529d`, post-treatment/chat `226f41c`.
-Verification: `make check` — 47 tests pass, Python compile, Compose config và Vite production build; FastAPI health/error/OpenAPI smoke pass.
-Known limits: Docker daemon không chạy trong session nên chưa boot PostgreSQL/reset demo; chạy `make reset-demo` khi Docker sẵn sàng.
+Verification: `make check` — 53 tests pass, Python compile, Compose config và Vite production build; FastAPI health/error/OpenAPI smoke pass.
+Known limits: Docker daemon không chạy trong session nên chưa boot PostgreSQL/reset demo; chạy `make reset-demo` khi Docker sẵn sàng. Frontend dev server proxy `/api` tới service `api:8000` trong Compose.

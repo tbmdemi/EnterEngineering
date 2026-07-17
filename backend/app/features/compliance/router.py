@@ -32,9 +32,15 @@ def _evidence(connection, encounter_id):
     return {row["code"]: dict(row) for row in rows}
 
 
+def _require_encounter(connection, encounter_id):
+    if not connection.execute("SELECT 1 FROM encounters WHERE id = %s", (encounter_id,)).fetchone():
+        raise AppError("ENCOUNTER_NOT_FOUND", "Encounter was not found", {"encounter_id": str(encounter_id)}, 404)
+
+
 @router.post("/encounters/{encounter_id}/evaluate")
 def evaluate_encounter(encounter_id: UUID, role=Depends(_require_staff)):
     with _connect() as connection:
+        _require_encounter(connection, encounter_id)
         evidence = _evidence(connection, encounter_id)
         checks = evaluate(evidence, derive_context(evidence))
         for check in checks:
@@ -76,6 +82,7 @@ def evaluate_encounter(encounter_id: UUID, role=Depends(_require_staff)):
 @router.get("/encounters/{encounter_id}/readiness")
 def readiness(encounter_id: UUID, _role=Depends(_require_staff)):
     with _connect() as connection:
+        _require_encounter(connection, encounter_id)
         checks = connection.execute(
             "SELECT code, state, policy_version, updated_at FROM obligation_checks WHERE encounter_id = %s ORDER BY code",
             (encounter_id,),
@@ -90,6 +97,7 @@ def readiness(encounter_id: UUID, _role=Depends(_require_staff)):
 @router.get("/audit-events")
 def audit_events(encounter_id: UUID = Query(...), _role=Depends(_require_auditor)):
     with _connect() as connection:
+        _require_encounter(connection, encounter_id)
         rows = connection.execute(
             """SELECT actor_role, action, object_type, object_id, correlation_id, metadata, created_at
                FROM audit_events WHERE encounter_id = %s ORDER BY created_at""",

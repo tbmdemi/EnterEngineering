@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from ...core.contracts import Role
 from ...core.errors import AppError
-from ...core.services import _connect, upsert_evidence
+from ...core.services import _connect
 from ...dependencies import require_demo_role
 
 
@@ -122,8 +122,25 @@ def save_documentation(data: DocumentationInput, role: Role = Depends(require_de
         values["DOC_TREATMENT_PLAN_SIGNED"] = {"signed": True}
     if data.medication_prescribed:
         values["DOC_MEDICATION_DETAILS"] = {"detail": data.medication_detail}
-    for code, value in values.items():
-        upsert_evidence(data.encounter_id, code, "VERIFIED", value, "FORM", None, role.value)
+    conditional_codes = ("DOC_CONSENT_SIGNED", "DOC_TREATMENT_PLAN_SIGNED", "DOC_MEDICATION_DETAILS")
+    with _connect() as connection:
+        for code, value in values.items():
+            connection.execute(
+                """INSERT INTO evidence_items (encounter_id, code, state, value, source_type, source_ref, actor_role)
+                   VALUES (%s,%s,'VERIFIED',%s::jsonb,'FORM',NULL,%s)
+                   ON CONFLICT (encounter_id, code) DO UPDATE SET state='VERIFIED', value=EXCLUDED.value,
+                     source_type='FORM', source_ref=NULL, actor_role=EXCLUDED.actor_role, updated_at=now()""",
+                (data.encounter_id, code, json.dumps(value), role.value),
+            )
+        connection.execute(
+            "DELETE FROM evidence_items WHERE encounter_id = %s AND code = ANY(%s)",
+            (data.encounter_id, [code for code in conditional_codes if code not in values]),
+        )
+        connection.execute(
+            """INSERT INTO audit_events (actor_role, action, object_type, encounter_id, metadata)
+               VALUES (%s,'DOCUMENTATION_SAVED','encounter',%s,%s::jsonb)""",
+            (role.value, data.encounter_id, json.dumps({"evidence_codes": list(values)})),
+        )
     return {"evidence_codes": list(values)}
 
 

@@ -139,5 +139,12 @@ def evaluate_coordination(encounter_id: UUID, role=Depends(require_demo_role)):
     task = None
     if conflicts:
         task = ensure_task(encounter_id, "COORD_SCHEDULE_CLEAR", "RESOLVE_SCHEDULE_CONFLICT", Role.FRONT_DESK.value, None, f"coord:{encounter_id}:schedule-conflict")
+    else:
+        with _connect() as connection:
+            connection.execute(
+                """UPDATE tasks SET status = 'CANCELLED'
+                   WHERE idempotency_key = %s AND status IN ('OPEN', 'ACKNOWLEDGED')""",
+                (f"coord:{encounter_id}:schedule-conflict",),
+            )
     append_audit(role.value, "COORDINATION_EVALUATED", "encounter", encounter_id, encounter_id, {"conflict_count": len(conflicts)})
     return {"schedule_clear": not conflicts, "conflicts": conflicts, "task": task}

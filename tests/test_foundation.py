@@ -3,6 +3,7 @@ import unittest
 from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
+from uuid import UUID
 
 
 ROOT = Path(__file__).parents[1]
@@ -98,6 +99,38 @@ class FoundationContractTest(unittest.TestCase):
         seed = (ROOT / "db/init/01_seed.sql").read_text()
         self.assertIn("Nguyen Minh Anh", seed)
         self.assertIn("dental-policy.v1", seed)
+
+    def test_frontend_container_uses_lockfile_and_proxies_api(self):
+        dockerfile = (ROOT / "frontend/Dockerfile").read_text()
+        config = (ROOT / "frontend/vite.config.js").read_text()
+
+        self.assertIn("package-lock.json", dockerfile)
+        self.assertIn("npm", dockerfile)
+        self.assertIn("ci", dockerfile)
+        self.assertIn('"/api"', config)
+        self.assertIn('"http://api:8000"', config)
+
+    def test_core_services_json_encode_uuid_values(self):
+        from backend.app.core import services
+
+        class FakeConnection:
+            def execute(self, _query, params):
+                self.params = params
+                return self
+
+            def fetchone(self):
+                return {"id": "evidence-1"}
+
+        @contextmanager
+        def fake_connect():
+            yield connection
+
+        connection = FakeConnection()
+        task_id = UUID("00000000-0000-0000-0000-000000000099")
+        with patch.object(services, "_connect", fake_connect):
+            services.upsert_evidence("enc", "COORD_HANDOFF_ACK", "VERIFIED", {"task_id": task_id}, "TASK", str(task_id), "ASSISTANT")
+
+        self.assertEqual(connection.params[3], '{"task_id": "00000000-0000-0000-0000-000000000099"}')
 
 
 if __name__ == "__main__":

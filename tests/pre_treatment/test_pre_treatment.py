@@ -9,6 +9,11 @@ feature = importlib.import_module("backend.app.features.pre_treatment.router")
 
 
 class PreTreatmentTest(unittest.TestCase):
+    def test_patient_cannot_read_internal_checklist(self):
+        with self.assertRaises(feature.AppError) as caught:
+            feature.get_checklist("encounter-1", Role.PATIENT)
+        self.assertEqual(caught.exception.status_code, 403)
+
     def test_checklist_keeps_missing_items_visible_and_marks_imaging_not_applicable(self):
         rows = [
             {"code": "PRE_PROCEDURE", "state": "VERIFIED", "value": {"requires_imaging": False}},

@@ -70,6 +70,19 @@ class CoordinationLogicTest(unittest.TestCase):
         self.assertEqual(upsert_evidence.call_args.args[1:3], ("COORD_SCHEDULE_CLEAR", "VERIFIED"))
 
     @patch.object(module, "append_audit")
+    @patch.object(module, "upsert_evidence")
+    def test_clear_schedule_cancels_open_conflict_task(self, _upsert_evidence, _append_audit):
+        class Connection:
+            def __init__(self): self.calls = []
+            def execute(self, query, params): self.calls.append((query, params)); return self
+        connection = Connection()
+        @contextmanager
+        def connect(): yield connection
+        with patch.object(module, "load_appointments", return_value=[]), patch.object(module, "_connect", connect):
+            module.evaluate_coordination(UUID("00000000-0000-0000-0000-000000000003"), Role.FRONT_DESK)
+        self.assertIn("status = 'CANCELLED'", connection.calls[0][0])
+
+    @patch.object(module, "append_audit")
     @patch.object(module, "ensure_task")
     def test_created_task_key_is_server_derived_and_scoped_to_encounter(self, ensure_task, _append_audit):
         ensure_task.side_effect = lambda *args: {"encounter_id": str(args[0]), "idempotency_key": args[-1], "id": "t"}

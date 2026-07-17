@@ -40,6 +40,8 @@ def evaluate(evidence_by_code, context=None):
             state = "MISSING"
         elif evidence["state"] == "DRAFT":
             state = "UNVERIFIED"
+        elif obligation["code"] == "COORD_SCHEDULE_CLEAR" and evidence.get("value", {}).get("clear") is not True:
+            state = "MISSING"
         else:
             state = "SATISFIED"
         checks.append({**obligation, "state": state, "policy_version": POLICY_VERSION})

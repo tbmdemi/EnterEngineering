@@ -13,6 +13,7 @@ from ...core.errors import AppError
 router = APIRouter(prefix="/api/v1/encounters", tags=["pre-treatment"])
 CODES = ("PRE_MEDICAL_HISTORY", "PRE_ALLERGY", "PRE_VITALS", "PRE_STERILIZATION", "PRE_IMAGING")
 STAFF_ROLES = {Role.ASSISTANT, Role.DENTIST}
+READ_ROLES = {Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST, Role.QA}
 
 
 class Attestation(BaseModel):
@@ -36,8 +37,14 @@ def _requires_imaging(encounter_id):
     return value if value is True or value is False else None
 
 
+def _require_reader(role):
+    if role not in READ_ROLES:
+        raise AppError("PRE_TREATMENT_ROLE_FORBIDDEN", "Staff role is required", {}, 403)
+
+
 @router.get("/{encounter_id}/pre-treatment")
 def get_checklist(encounter_id: str, _role=Depends(dependencies.require_demo_role)):
+    _require_reader(_role)
     evidence = {row["code"]: row for row in _read_evidence(encounter_id)}
     procedure = evidence.get("PRE_PROCEDURE")
     requires_imaging = procedure["value"].get("requires_imaging") if procedure and procedure["state"] == "VERIFIED" else None
