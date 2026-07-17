@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from ...core.contracts import EvidenceState, Role, TaskStatus
 from ...core.errors import AppError
-from ...core.services import _connect, append_audit, ensure_task, upsert_evidence
+from ...core.services import _connect, append_audit, ensure_task, require_encounter, upsert_evidence
 from ...dependencies import require_demo_role
 
 
@@ -96,6 +96,7 @@ def _task(task_id):
 @router.post("/api/v1/coordination/tasks")
 def create_task(request: TaskRequest, role=Depends(require_demo_role)):
     _staff(role)
+    require_encounter(request.encounter_id)
     validate_task_request(request.task_type, request.owner_role)
     owner = request.owner_role or role
     idempotency_key = f"coord:{request.encounter_id}:{request.task_type.lower()}:{request.obligation_code.lower()}"
@@ -134,6 +135,7 @@ def complete(task_id: UUID, role=Depends(require_demo_role)):
 @router.post("/api/v1/encounters/{encounter_id}/coordination/evaluate")
 def evaluate_coordination(encounter_id: UUID, role=Depends(require_demo_role)):
     _staff(role)
+    require_encounter(encounter_id)
     conflicts = find_conflicts(load_appointments(encounter_id))
     upsert_evidence(encounter_id, "COORD_SCHEDULE_CLEAR", EvidenceState.VERIFIED.value, {"clear": not conflicts, "conflicts": conflicts}, "SCHEDULE", None, role.value)
     task = None

@@ -132,6 +132,26 @@ class FoundationContractTest(unittest.TestCase):
 
         self.assertEqual(connection.params[3], '{"task_id": "00000000-0000-0000-0000-000000000099"}')
 
+    def test_stable_task_reopens_after_it_was_cancelled(self):
+        from backend.app.core import services
+
+        class FakeConnection:
+            def execute(self, query, _params):
+                self.query = query
+                return self
+
+            def fetchone(self):
+                return {"id": "task-1", "status": "OPEN"}
+
+        connection = FakeConnection()
+        @contextmanager
+        def fake_connect():
+            yield connection
+
+        with patch.object(services, "_connect", fake_connect):
+            services.ensure_task("enc", "COORD_SCHEDULE_CLEAR", "RESOLVE_SCHEDULE_CONFLICT", "FRONT_DESK", None, "coord:enc:schedule-conflict")
+        self.assertIn("status = CASE WHEN tasks.status = 'CANCELLED' THEN 'OPEN'", connection.query)
+
 
 if __name__ == "__main__":
     unittest.main()

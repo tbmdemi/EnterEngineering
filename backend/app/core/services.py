@@ -2,6 +2,8 @@ import json
 import os
 from contextlib import contextmanager
 
+from .errors import AppError
+
 
 def _json(value):
     return json.dumps(value, default=str)
@@ -35,13 +37,19 @@ def upsert_evidence(encounter_id, code, state, value, source_type, source_ref, a
         return dict(connection.execute(query, (encounter_id, code, state, _json(value), source_type, source_ref, actor_role)).fetchone())
 
 
+def require_encounter(encounter_id):
+    with _connect() as connection:
+        if not connection.execute("SELECT 1 FROM encounters WHERE id = %s", (encounter_id,)).fetchone():
+            raise AppError("ENCOUNTER_NOT_FOUND", "Encounter was not found", {"encounter_id": str(encounter_id)}, 404)
+
+
 def ensure_task(encounter_id, obligation_code, task_type, owner_role, due_at, idempotency_key):
     query = """
         INSERT INTO tasks
           (encounter_id, obligation_code, task_type, owner_role, due_at, idempotency_key)
         VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (idempotency_key) DO UPDATE SET
-          idempotency_key = EXCLUDED.idempotency_key
+          status = CASE WHEN tasks.status = 'CANCELLED' THEN 'OPEN' ELSE tasks.status END
         RETURNING *
     """
     with _connect() as connection:

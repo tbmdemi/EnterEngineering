@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from ...core.contracts import Role
 from ...core.errors import AppError
-from ...core.services import _connect
+from ...core.services import _connect, require_encounter
 from ...dependencies import require_demo_role
 
 
@@ -111,6 +111,7 @@ def _save_run(encounter_id: UUID, model_name: str, facts: list[Fact]) -> str:
 @router.post("/api/v1/documentation")
 def save_documentation(data: DocumentationInput, role: Role = Depends(require_demo_role)):
     _require_role(role, Role.ASSISTANT, Role.DENTIST)
+    require_encounter(data.encounter_id)
     values = {
         "DOC_MEDICATION_PRESCRIBED": {"prescribed": data.medication_prescribed},
         "DOC_PROGRESS_NOTE": {"note": data.progress_note},
@@ -147,6 +148,7 @@ def save_documentation(data: DocumentationInput, role: Role = Depends(require_de
 @router.post("/api/v1/ai/extract-note", response_model=Extraction)
 def extract_note(data: ExtractNoteInput, role: Role = Depends(require_demo_role)):
     _require_role(role, Role.ASSISTANT, Role.DENTIST)
+    require_encounter(data.encounter_id)
     try:
         facts, model = _live_extract(data.note)
     except Exception:

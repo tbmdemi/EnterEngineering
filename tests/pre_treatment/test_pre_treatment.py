@@ -20,7 +20,7 @@ class PreTreatmentTest(unittest.TestCase):
             {"code": "PRE_ALLERGY", "state": "VERIFIED", "value": {"answer": "none"}, "actor_role": "ASSISTANT", "updated_at": datetime.now(timezone.utc)},
         ]
 
-        with patch.object(feature, "_read_evidence", return_value=rows):
+        with patch.object(feature, "_require_encounter"), patch.object(feature, "_read_evidence", return_value=rows):
             result = feature.get_checklist("encounter-1", Role.ASSISTANT)
 
         by_code = {item["code"]: item for item in result["items"]}
@@ -61,7 +61,7 @@ class PreTreatmentTest(unittest.TestCase):
         self.assertTrue(upsert.call_args.args[3]["not_applicable"])
 
     def test_unknown_procedure_keeps_imaging_applicable_and_preserves_attestation(self):
-        with patch.object(feature, "_read_evidence", return_value=[]):
+        with patch.object(feature, "_require_encounter"), patch.object(feature, "_read_evidence", return_value=[]):
             result = feature.get_checklist("enc", Role.ASSISTANT)
         imaging = next(item for item in result["items"] if item["code"] == "PRE_IMAGING")
         self.assertTrue(imaging["applicable"])

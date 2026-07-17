@@ -29,6 +29,10 @@ def _read_evidence(encounter_id):
         ).fetchall()]
 
 
+def _require_encounter(encounter_id):
+    services.require_encounter(encounter_id)
+
+
 def _requires_imaging(encounter_id):
     procedure = next((row for row in _read_evidence(encounter_id) if row["code"] == "PRE_PROCEDURE"), None)
     if not procedure or procedure["state"] != "VERIFIED" or "requires_imaging" not in procedure["value"]:
@@ -45,6 +49,7 @@ def _require_reader(role):
 @router.get("/{encounter_id}/pre-treatment")
 def get_checklist(encounter_id: str, _role=Depends(dependencies.require_demo_role)):
     _require_reader(_role)
+    _require_encounter(encounter_id)
     evidence = {row["code"]: row for row in _read_evidence(encounter_id)}
     procedure = evidence.get("PRE_PROCEDURE")
     requires_imaging = procedure["value"].get("requires_imaging") if procedure and procedure["state"] == "VERIFIED" else None

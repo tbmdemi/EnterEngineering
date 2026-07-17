@@ -31,7 +31,7 @@ class DocumentationAiTest(unittest.TestCase):
         connection = Connection()
         @contextmanager
         def connect(): yield connection
-        with patch("backend.app.features.documentation_ai.api._connect", connect):
+        with patch("backend.app.features.documentation_ai.api.require_encounter"), patch("backend.app.features.documentation_ai.api._connect", connect):
             result = save_documentation(data, Role.DENTIST)
         self.assertEqual(sum("INSERT INTO evidence_items" in call[0] for call in connection.calls), 6)
         self.assertIn("DELETE FROM evidence_items", connection.calls[-2][0])
@@ -42,7 +42,7 @@ class DocumentationAiTest(unittest.TestCase):
         data = DocumentationInput(encounter_id="00000000-0000-0000-0000-000000000001", consent_signed=False,
                                   treatment_plan_signed=False, progress_note="Completed.", tooth="14", surface="O")
         connection = Connection()
-        with patch("backend.app.features.documentation_ai.api._connect", connect):
+        with patch("backend.app.features.documentation_ai.api.require_encounter"), patch("backend.app.features.documentation_ai.api._connect", connect):
             save_documentation(data, Role.DENTIST)
         deleted_codes = connection.calls[-2][1][1]
         self.assertEqual(set(deleted_codes), {"DOC_CONSENT_SIGNED", "DOC_TREATMENT_PLAN_SIGNED", "DOC_MEDICATION_DETAILS"})
@@ -52,7 +52,7 @@ class DocumentationAiTest(unittest.TestCase):
         from backend.app.features.documentation_ai.api import ExtractNoteInput, extract_note
 
         note = "Reviewed history. Tooth 14 surface O restored. Patient tolerated procedure."
-        with patch.dict(os.environ, {}, clear=True), patch("backend.app.features.documentation_ai.api._save_run", return_value="run-1"):
+        with patch.dict(os.environ, {}, clear=True), patch("backend.app.features.documentation_ai.api.require_encounter"), patch("backend.app.features.documentation_ai.api._save_run", return_value="run-1"):
             result = extract_note(ExtractNoteInput(encounter_id="00000000-0000-0000-0000-000000000001", note=note), Role.ASSISTANT)
         self.assertEqual(result.state, "UNVERIFIED")
         self.assertEqual(result.facts[0].source_span, "Tooth 14 surface O restored.")
