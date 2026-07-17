@@ -38,6 +38,13 @@ def advance_stage(encounter_id, stage, version):
     with _connect() as connection:
         current = _context(connection, encounter_id)
         current_stage = EncounterStage(current["stage"])
+        if version != current["version"]:
+            raise AppError(
+                "STALE_ENCOUNTER_VERSION",
+                "Encounter was updated by another request",
+                {"expected_version": version, "current_version": current["version"]},
+                409,
+            )
         if STAGES.index(target) != STAGES.index(current_stage) + 1:
             raise AppError(
                 "INVALID_STAGE_TRANSITION",

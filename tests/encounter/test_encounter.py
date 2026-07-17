@@ -1,9 +1,14 @@
 import unittest
+import importlib
 from contextlib import contextmanager
 from unittest.mock import patch
 
 from backend.app.core.errors import AppError
+from backend.app.core.contracts import Role
 from backend.app.features.encounter import service
+from backend.app.features.encounter.router import StageChange
+
+encounter_router = importlib.import_module("backend.app.features.encounter.router")
 
 
 CONTEXT = {
@@ -71,6 +76,58 @@ class EncounterTest(unittest.TestCase):
             service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 0)
         self.assertEqual(caught.exception.status_code, 409)
         self.assertEqual(caught.exception.payload["code"], "STALE_ENCOUNTER_VERSION")
+
+    def test_stale_version_wins_after_another_request_progressed_the_stage(self):
+        progressed = {**CONTEXT, "stage": "PRE_TREATMENT", "version": 2}
+        connection, connect = self.connection([progressed])
+        with patch.object(service, "_connect", connect), self.assertRaises(AppError) as caught:
+            service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 1)
+
+        self.assertEqual(caught.exception.payload["code"], "STALE_ENCOUNTER_VERSION")
+        self.assertEqual(len(connection.calls), 1)
+
+    def test_stage_change_denies_patient_and_qa(self):
+        change = StageChange(stage="PRE_TREATMENT", version=1)
+        for role in (Role.PATIENT, Role.QA):
+            with self.subTest(role=role), patch.object(encounter_router, "advance_stage") as advance, self.assertRaises(AppError) as caught:
+                encounter_router.change_stage(CONTEXT["id"], change, role)
+            self.assertEqual(caught.exception.status_code, 403)
+            self.assertEqual(caught.exception.payload["code"], "ROLE_FORBIDDEN")
+            advance.assert_not_called()
+
+        for role in (Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST):
+            with self.subTest(role=role), patch.object(encounter_router, "advance_stage", return_value=CONTEXT) as advance:
+                encounter_router.change_stage(CONTEXT["id"], change, role)
+            advance.assert_called_once()
+
+    def test_full_stage_sequence_preserves_context_and_increments_version(self):
+        state = dict(CONTEXT)
+
+        class StatefulConnection:
+            def execute(self, query, params):
+                if "UPDATE encounters" in query:
+                    if params[2] != state["version"]:
+                        self.row = None
+                    else:
+                        state["stage"], state["version"] = params[0], state["version"] + 1
+                        self.row = {"id": state["id"]}
+                else:
+                    self.row = dict(state)
+                return self
+
+            def fetchone(self):
+                return self.row
+
+        @contextmanager
+        def connect():
+            yield StatefulConnection()
+
+        with patch.object(service, "_connect", connect):
+            for version, stage in enumerate(("PRE_TREATMENT", "TREATMENT", "POST_TREATMENT", "CLOSED"), 1):
+                result = service.advance_stage(CONTEXT["id"], stage, version)
+                self.assertEqual(result["version"], version + 1)
+                self.assertEqual(result["patient"], CONTEXT["patient"])
+                self.assertEqual(result["appointment"], CONTEXT["appointment"])
 
     def test_unknown_encounter_is_404(self):
         _connection, connect = self.connection([None])
