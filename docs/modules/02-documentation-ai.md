@@ -26,6 +26,6 @@ React export bắt buộc: `export const route = { path, label, Component }`; in
 AI output không bao giờ tự `SATISFIED`; accept tạo verified evidence và audit; reject giữ nguồn không đổi; timeout chạy fixture.
 
 ## Handoff integrator
-Router export: ghi import path, prefix và env dùng.
-Route export: ghi import path và URL.
-Verification: ghi lệnh test, fixture và commit hash.
+Router export: `from backend.app.features.documentation_ai import router`; paths giữ nguyên `/api/v1`; live provider dùng `MODEL_BASE_URL`, `MODEL_API_KEY`, `MODEL_NAME`, thiếu/lỗi sẽ dùng fixture.
+Route export: `import { route } from "./features/documentation-ai"`; URL `/documentation-ai`.
+Verification: `python -m unittest tests.documentation_ai.test_documentation_ai -v`; fixture `fixture-v1`; implementation commit `45f2c68`.
