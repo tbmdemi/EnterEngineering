@@ -25,6 +25,6 @@ React export bắt buộc: `export const route = { path, label, Component }`; in
 Handoff chưa acknowledge vẫn open; referral thiếu owner bị từ chối; evaluate lặp không clone task; overlap chair/appointment bị flag.
 
 ## Handoff integrator
-Router export: ghi import path và prefix.
-Route export: ghi import path và URL.
-Verification: ghi lệnh test, idempotency key và commit hash.
+Router export: `backend.app.features.coordination.router` (`router`), API prefix nằm sẵn trong từng route `/api/v1`.
+Route export: `frontend/src/features/coordination/index.jsx` (`route`), URL `/coordination`.
+Verification: `python -m unittest tests.coordination.test_coordination -v`; idempotency `coord:{encounter_id}:schedule-conflict`; commit xem bằng `git rev-parse HEAD`.
