@@ -1,5 +1,7 @@
+import json
 import unittest
 from contextlib import contextmanager
+from pathlib import Path
 from unittest.mock import patch
 
 from backend.app.core.contracts import Role
@@ -7,8 +9,9 @@ from backend.app.core.errors import AppError
 
 
 class FakeConnection:
-    def __init__(self, rows=()):
+    def __init__(self, rows=(), one_rows=()):
         self.rows = iter(rows)
+        self.one_rows = iter(one_rows)
         self.calls = []
 
     def execute(self, query, params=()):
@@ -18,9 +21,12 @@ class FakeConnection:
     def fetchall(self):
         return list(self.rows)
 
+    def fetchone(self):
+        return next(self.one_rows)
 
-def connection_for(*rows):
-    connection = FakeConnection(rows)
+
+def connection_for(*rows, one_rows=()):
+    connection = FakeConnection(rows, one_rows)
 
     @contextmanager
     def connect():
@@ -30,7 +36,7 @@ def connection_for(*rows):
 
 
 class PostTreatmentChatTest(unittest.TestCase):
-    def test_release_is_staff_only_and_creates_idempotent_follow_up(self):
+    def test_release_is_staff_only_stage_gated_and_atomic(self):
         from backend.app.features.post_treatment_chat import service
 
         payload = service.ReleaseRequest(
@@ -42,19 +48,43 @@ class PostTreatmentChatTest(unittest.TestCase):
             service.release_encounter(service.DEMO_ENCOUNTER_ID, payload, Role.PATIENT)
         self.assertEqual(caught.exception.status_code, 403)
 
-        evidence = {"id": "e1"}
-        with patch.object(service, "upsert_evidence", return_value=evidence) as upsert, \
-             patch.object(service, "ensure_task", return_value={"id": "t1", "status": "OPEN"}) as ensure, \
-             patch.object(service, "append_audit") as audit:
-            connection, connect = connection_for()
-            with patch.object(service, "_connect", connect):
-                result = service.release_encounter(service.DEMO_ENCOUNTER_ID, payload, Role.DENTIST)
+        connection, connect = connection_for(one_rows=[
+            {"stage": "POST_TREATMENT"},
+            {"id": "e1", "code": "POST_CARE_INSTRUCTIONS"},
+            {"id": "e2", "code": "POST_RECALL"},
+            {"id": "e3", "code": "POST_COMPLICATION_MONITORING"},
+            {"id": "t1", "status": "OPEN"},
+        ])
+        connect_calls = 0
 
-        self.assertEqual(upsert.call_count, 3)
-        self.assertEqual(ensure.call_args.args[-1], f"post-complication:{service.DEMO_ENCOUNTER_ID}")
+        @contextmanager
+        def counted_connect():
+            nonlocal connect_calls
+            connect_calls += 1
+            yield connection
+
+        with patch.object(service, "_connect", counted_connect):
+            result = service.release_encounter(service.DEMO_ENCOUNTER_ID, payload, Role.DENTIST)
+
+        self.assertEqual(connect_calls, 1)
         self.assertEqual(result["task"]["id"], "t1")
-        self.assertNotIn("care_instructions", audit.call_args.args[-1])
-        self.assertIn("released_to_patient_at", connection.calls[0][0])
+        sql = "\n".join(call[0] for call in connection.calls)
+        self.assertIn("FOR UPDATE", sql)
+        self.assertEqual(sql.count("INSERT INTO evidence_items"), 3)
+        self.assertIn("ON CONFLICT (idempotency_key)", sql)
+        self.assertIn("released_to_patient_at", sql)
+        self.assertIn("INSERT INTO audit_events", sql)
+        self.assertNotIn(payload.care_instructions, str(connection.calls[-1]))
+
+    def test_release_rejects_wrong_stage_before_writes(self):
+        from backend.app.features.post_treatment_chat import service
+
+        payload = service.ReleaseRequest(care_instructions="Care", recall_at="2026-07-24T02:00:00Z", monitor_until="2026-07-20T02:00:00Z")
+        connection, connect = connection_for(one_rows=[{"stage": "TREATMENT"}])
+        with patch.object(service, "_connect", connect), self.assertRaises(AppError) as caught:
+            service.release_encounter(service.DEMO_ENCOUNTER_ID, payload, Role.DENTIST)
+        self.assertEqual(caught.exception.payload["code"], "ENCOUNTER_NOT_RELEASABLE")
+        self.assertEqual(len(connection.calls), 1)
 
     def test_my_record_only_reads_released_verified_evidence_and_has_citations(self):
         from backend.app.features.post_treatment_chat import service
@@ -112,6 +142,18 @@ class PostTreatmentChatTest(unittest.TestCase):
         with self.assertRaises(AppError) as caught:
             service.chat(service.ChatRequest(message="Giờ mở cửa?"), Role.DENTIST)
         self.assertEqual(caught.exception.status_code, 403)
+
+    def test_approved_cards_fixture_has_versioned_provenance(self):
+        from backend.app.features.post_treatment_chat import service
+
+        fixture = Path(service.__file__).with_name("approved_cards.v1.json")
+        cards = json.loads(fixture.read_text())
+        self.assertEqual(cards["version"], "dental-cards.v1")
+        self.assertTrue(cards["approved_by"])
+        for card in cards["cards"]:
+            self.assertTrue(card["id"])
+            self.assertTrue(card["source"])
+        self.assertEqual(service.APPROVED_CARDS["version"], cards["version"])
 
 
 if __name__ == "__main__":

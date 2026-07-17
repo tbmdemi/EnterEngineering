@@ -1,0 +1,11 @@
+{
+  "version": "dental-cards.v1",
+  "approved_by": "CareGuard Dental Clinical Lead",
+  "cards": [
+    {"id": "clinic-hours", "intent": "CLINIC_FAQ", "keywords": ["giờ", "mở cửa"], "answer": "Phòng khám mở cửa 08:00–17:00 từ thứ Hai đến thứ Sáu.", "source": "CareGuard Dental clinic information v1"},
+    {"id": "clinic-address", "intent": "CLINIC_FAQ", "keywords": ["địa chỉ"], "answer": "Địa chỉ demo: 123 Nguyễn Huệ, Quận 1.", "source": "CareGuard Dental clinic information v1"},
+    {"id": "post-treatment-pain", "intent": "SYMPTOM_INFO", "keywords": ["đau"], "answer": "Đau nhẹ có thể xuất hiện sau điều trị. Làm theo hướng dẫn đã phát hành; nếu đau tăng hoặc kéo dài, hãy liên hệ phòng khám.", "source": "CareGuard Dental approved aftercare card v1"},
+    {"id": "post-treatment-swelling", "intent": "SYMPTOM_INFO", "keywords": ["sưng"], "answer": "Sưng nhẹ có thể xuất hiện sau điều trị. Nếu sưng tăng nhanh, lan rộng hoặc kèm khó thở/nuốt, hãy đi cấp cứu ngay.", "source": "CareGuard Dental approved aftercare card v1"},
+    {"id": "emergency", "intent": "SYMPTOM_INFO", "keywords": ["khó thở", "khó nuốt", "sưng lan nhanh", "sưng lan rộng", "chảy máu không kiểm soát", "chấn thương nặng"], "answer": "Đây có thể là tình trạng khẩn cấp nha khoa. Hãy gọi cấp cứu địa phương hoặc đến cơ sở cấp cứu ngay; không chờ tư vấn qua chat.", "source": "CareGuard Dental emergency escalation card v1", "escalation": true}
+  ]
+}
