@@ -1,0 +1,18 @@
+[
+  {"code":"DOC_CONSENT_SIGNED","owner_role":"DENTIST"},
+  {"code":"DOC_TREATMENT_PLAN_SIGNED","owner_role":"DENTIST"},
+  {"code":"DOC_PROGRESS_NOTE","owner_role":"DENTIST"},
+  {"code":"DOC_MEDICATION_DETAILS","owner_role":"DENTIST","when":"medication_prescribed"},
+  {"code":"DOC_TOOTH_SURFACE","owner_role":"DENTIST"},
+  {"code":"PRE_MEDICAL_HISTORY","owner_role":"ASSISTANT"},
+  {"code":"PRE_ALLERGY","owner_role":"ASSISTANT"},
+  {"code":"PRE_VITALS","owner_role":"ASSISTANT"},
+  {"code":"PRE_STERILIZATION","owner_role":"ASSISTANT"},
+  {"code":"PRE_IMAGING","owner_role":"DENTIST","when":"imaging_required"},
+  {"code":"POST_CARE_INSTRUCTIONS","owner_role":"DENTIST"},
+  {"code":"POST_RECALL","owner_role":"FRONT_DESK"},
+  {"code":"POST_COMPLICATION_MONITORING","owner_role":"ASSISTANT"},
+  {"code":"COORD_HANDOFF_ACK","owner_role":"ASSISTANT"},
+  {"code":"COORD_REFERRAL_OWNER","owner_role":"FRONT_DESK"},
+  {"code":"COORD_SCHEDULE_CLEAR","owner_role":"FRONT_DESK"}
+]

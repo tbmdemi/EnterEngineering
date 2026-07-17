@@ -4,9 +4,11 @@ from fastapi.responses import JSONResponse
 
 from .core.errors import AppError
 from .dependencies import require_demo_role
+from .features.compliance.router import router as compliance_router
 
 
 app = FastAPI(title="CareGuard Dental Demo")
+app.include_router(compliance_router)
 
 
 @app.exception_handler(AppError)
