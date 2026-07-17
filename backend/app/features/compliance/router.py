@@ -1,21 +1,15 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
 
 from ...core.contracts import Role
 from ...core.errors import AppError
-from ...core.services import _connect, append_audit, ensure_task
+from ...core.services import _connect
 from ...dependencies import require_demo_role
-from .evaluator import POLICY_VERSION, evaluate, task_key
+from .evaluator import POLICY_VERSION, derive_context, desired_task_status, evaluate, task_key
 
 
 router = APIRouter(prefix="/api/v1", tags=["compliance"])
-
-
-class EvaluationRequest(BaseModel):
-    medication_prescribed: bool = False
-    imaging_required: bool = False
 
 
 def _require_staff(role=Depends(require_demo_role)):
@@ -30,19 +24,19 @@ def _require_auditor(role=Depends(require_demo_role)):
     return role
 
 
-def _evidence(encounter_id):
-    with _connect() as connection:
-        rows = connection.execute(
-            "SELECT code, state, value FROM evidence_items WHERE encounter_id = %s",
-            (encounter_id,),
-        ).fetchall()
+def _evidence(connection, encounter_id):
+    rows = connection.execute(
+        "SELECT code, state, value FROM evidence_items WHERE encounter_id = %s",
+        (encounter_id,),
+    ).fetchall()
     return {row["code"]: dict(row) for row in rows}
 
 
 @router.post("/encounters/{encounter_id}/evaluate")
-def evaluate_encounter(encounter_id: UUID, request: EvaluationRequest, role=Depends(_require_staff)):
-    checks = evaluate(_evidence(encounter_id), request.model_dump())
+def evaluate_encounter(encounter_id: UUID, role=Depends(_require_staff)):
     with _connect() as connection:
+        evidence = _evidence(connection, encounter_id)
+        checks = evaluate(evidence, derive_context(evidence))
         for check in checks:
             connection.execute(
                 """INSERT INTO obligation_checks (encounter_id, code, state, policy_version)
@@ -51,10 +45,31 @@ def evaluate_encounter(encounter_id: UUID, request: EvaluationRequest, role=Depe
                    SET state = EXCLUDED.state, updated_at = now()""",
                 (encounter_id, check["code"], check["state"], POLICY_VERSION),
             )
-    for check in checks:
-        if check["state"] in {"MISSING", "UNVERIFIED"}:
-            ensure_task(encounter_id, check["code"], "REVIEW", check["owner_role"], None, task_key(encounter_id, check["code"]))
-    append_audit(role.value, "ENCOUNTER_EVALUATED", "encounter", encounter_id, encounter_id, {"policy_version": POLICY_VERSION})
+            key = task_key(encounter_id, check["code"])
+            if desired_task_status(check["state"]) == "OPEN":
+                connection.execute(
+                    """INSERT INTO tasks
+                         (encounter_id, obligation_code, task_type, owner_role, idempotency_key, status)
+                       VALUES (%s, %s, 'REVIEW', %s, %s, 'OPEN')
+                       ON CONFLICT (idempotency_key) DO UPDATE
+                       SET encounter_id = EXCLUDED.encounter_id,
+                           obligation_code = EXCLUDED.obligation_code,
+                           owner_role = EXCLUDED.owner_role,
+                           status = 'OPEN'""",
+                    (encounter_id, check["code"], check["owner_role"], key),
+                )
+            else:
+                connection.execute(
+                    """UPDATE tasks SET status = 'CANCELLED'
+                       WHERE idempotency_key = %s AND status IN ('OPEN', 'ACKNOWLEDGED')""",
+                    (key,),
+                )
+        connection.execute(
+            """INSERT INTO audit_events
+                 (actor_role, action, object_type, object_id, encounter_id, metadata)
+               VALUES (%s, 'ENCOUNTER_EVALUATED', 'encounter', %s, %s, %s::jsonb)""",
+            (role.value, encounter_id, encounter_id, '{"policy_version":"dental-policy.v1"}'),
+        )
     return {"encounter_id": encounter_id, "policy_version": POLICY_VERSION, "checks": checks}
 
 

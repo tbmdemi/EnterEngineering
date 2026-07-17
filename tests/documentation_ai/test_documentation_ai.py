@@ -27,8 +27,9 @@ class DocumentationAiTest(unittest.TestCase):
                                   medication_prescribed=True, medication_detail="Lidocaine")
         with patch("backend.app.features.documentation_ai.api.upsert_evidence") as upsert:
             result = save_documentation(data, Role.DENTIST)
-        self.assertEqual(upsert.call_count, 5)
+        self.assertEqual(upsert.call_count, 6)
         self.assertIn("DOC_MEDICATION_DETAILS", result["evidence_codes"])
+        self.assertIn("DOC_MEDICATION_PRESCRIBED", result["evidence_codes"])
 
     def test_fixture_has_exact_source_span(self):
         from backend.app.core.contracts import Role

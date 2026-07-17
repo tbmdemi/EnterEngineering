@@ -23,22 +23,53 @@ class ComplianceEvaluatorTest(unittest.TestCase):
         self.assertIn("compliance.router", backend)
         self.assertIn("complianceRoute", frontend)
 
-    def test_maps_verified_draft_missing_and_conditional_evidence(self):
-        from backend.app.features.compliance.evaluator import evaluate
+    def test_compliance_ui_exposes_evaluate_readiness_audit_and_dashboard(self):
+        root = Path(__file__).parents[2]
+        source = (root / "frontend/src/features/compliance/index.jsx").read_text()
+        for endpoint in ("/evaluate", "/readiness", "/audit-events", "/dashboard"):
+            self.assertIn(endpoint, source)
 
-        result = {item["code"]: item for item in evaluate(
-            {
-                "DOC_CONSENT_SIGNED": {"state": "VERIFIED"},
-                "DOC_PROGRESS_NOTE": {"state": "DRAFT"},
-            },
-            {"medication_prescribed": False, "imaging_required": False},
-        )}
+    def test_app_shell_renders_the_active_feature_route(self):
+        root = Path(__file__).parents[2]
+        source = (root / "frontend/src/main.jsx").read_text()
+
+        self.assertIn("window.location.pathname", source)
+        self.assertIn("<activeRoute.Component", source)
+
+    def test_maps_verified_draft_missing_and_conditional_evidence(self):
+        from backend.app.features.compliance.evaluator import derive_context, evaluate
+
+        evidence = {
+            "DOC_CONSENT_SIGNED": {"state": "VERIFIED", "value": {}},
+            "DOC_PROGRESS_NOTE": {"state": "DRAFT", "value": {}},
+            "DOC_MEDICATION_PRESCRIBED": {"state": "VERIFIED", "value": {"prescribed": False}},
+            "PRE_PROCEDURE": {"state": "VERIFIED", "value": {"requires_imaging": False}},
+        }
+        result = {item["code"]: item for item in evaluate(evidence, derive_context(evidence))}
 
         self.assertEqual(result["DOC_CONSENT_SIGNED"]["state"], "SATISFIED")
         self.assertEqual(result["DOC_PROGRESS_NOTE"]["state"], "UNVERIFIED")
         self.assertEqual(result["PRE_ALLERGY"]["state"], "MISSING")
         self.assertEqual(result["DOC_MEDICATION_DETAILS"]["state"], "NOT_APPLICABLE")
         self.assertEqual(result["PRE_IMAGING"]["state"], "NOT_APPLICABLE")
+
+    def test_unknown_conditional_context_stays_missing(self):
+        from backend.app.features.compliance.evaluator import derive_context, evaluate
+
+        result = {item["code"]: item for item in evaluate({}, derive_context({}))}
+
+        self.assertEqual(result["DOC_MEDICATION_DETAILS"]["state"], "MISSING")
+        self.assertEqual(result["PRE_IMAGING"]["state"], "MISSING")
+
+    def test_task_reconciliation_reopens_and_cancels_with_same_key(self):
+        from backend.app.features.compliance.evaluator import desired_task_status, task_key
+
+        key = task_key("enc-1", "PRE_ALLERGY")
+        self.assertEqual(desired_task_status("MISSING"), "OPEN")
+        self.assertEqual(desired_task_status("UNVERIFIED"), "OPEN")
+        self.assertEqual(desired_task_status("SATISFIED"), "CANCELLED")
+        self.assertEqual(desired_task_status("NOT_APPLICABLE"), "CANCELLED")
+        self.assertEqual(key, task_key("enc-1", "PRE_ALLERGY"))
 
     def test_policy_covers_all_four_pain_point_groups(self):
         from backend.app.features.compliance.evaluator import POLICY

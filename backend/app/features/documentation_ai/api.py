@@ -112,6 +112,7 @@ def _save_run(encounter_id: UUID, model_name: str, facts: list[Fact]) -> str:
 def save_documentation(data: DocumentationInput, role: Role = Depends(require_demo_role)):
     _require_role(role, Role.ASSISTANT, Role.DENTIST)
     values = {
+        "DOC_MEDICATION_PRESCRIBED": {"prescribed": data.medication_prescribed},
         "DOC_PROGRESS_NOTE": {"note": data.progress_note},
         "DOC_TOOTH_SURFACE": {"tooth": data.tooth, "surface": data.surface},
     }
