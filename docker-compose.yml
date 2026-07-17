@@ -1,0 +1,23 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: careguard
+      POSTGRES_USER: careguard
+      POSTGRES_PASSWORD: careguard
+    ports: ["5432:5432"]
+    volumes:
+      - dental_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+  api:
+    build: ./backend
+    environment:
+      DATABASE_URL: postgresql://careguard:careguard@db:5432/careguard
+    ports: ["8000:8000"]
+    depends_on: [db]
+  web:
+    build: ./frontend
+    ports: ["5173:5173"]
+    depends_on: [api]
+volumes:
+  dental_data:
