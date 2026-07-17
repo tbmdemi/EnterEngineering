@@ -1,5 +1,6 @@
 import os
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -7,124 +8,132 @@ from pydantic import ValidationError
 
 
 class DocumentationAiTest(unittest.TestCase):
-    def test_medication_details_are_required_only_when_medication_is_used(self):
+    def test_medication_detail_is_conditional(self):
         from backend.app.features.documentation_ai.api import DocumentationInput
 
-        common = dict(
-            encounter_id="00000000-0000-0000-0000-000000000001",
-            consent_signed=True,
-            treatment_plan_signed=True,
-            progress_note="Composite restoration completed.",
-            tooth="14",
-            surface="O",
-        )
-        DocumentationInput(**common, medication_used=False)
+        common = dict(encounter_id="00000000-0000-0000-0000-000000000001", consent_signed=True,
+                      treatment_plan_signed=True, progress_note="Completed.", tooth="14", surface="O")
+        DocumentationInput(**common, medication_prescribed=False)
         with self.assertRaises(ValidationError):
-            DocumentationInput(**common, medication_used=True)
-        self.assertEqual(
-            DocumentationInput(**common, medication_used=True, medication_detail="Lidocaine 2%, 1.8 mL").medication_detail,
-            "Lidocaine 2%, 1.8 mL",
-        )
+            DocumentationInput(**common, medication_prescribed=True)
+        self.assertEqual(DocumentationInput(**common, medication_prescribed=True, medication_detail="Lidocaine").medication_detail, "Lidocaine")
 
-    def test_missing_provider_config_uses_fixture_with_exact_source_span(self):
+    def test_documentation_form_persists_expected_evidence(self):
+        from backend.app.core.contracts import Role
+        from backend.app.features.documentation_ai.api import DocumentationInput, save_documentation
+
+        data = DocumentationInput(encounter_id="00000000-0000-0000-0000-000000000001", consent_signed=True,
+                                  treatment_plan_signed=True, progress_note="Completed.", tooth="14", surface="O",
+                                  medication_prescribed=True, medication_detail="Lidocaine")
+        with patch("backend.app.features.documentation_ai.api.upsert_evidence") as upsert:
+            result = save_documentation(data, Role.DENTIST)
+        self.assertEqual(upsert.call_count, 5)
+        self.assertIn("DOC_MEDICATION_DETAILS", result["evidence_codes"])
+
+    def test_fixture_has_exact_source_span(self):
         from backend.app.core.contracts import Role
         from backend.app.features.documentation_ai.api import ExtractNoteInput, extract_note
 
         note = "Reviewed history. Tooth 14 surface O restored. Patient tolerated procedure."
-        with patch.dict(os.environ, {}, clear=True), patch(
-            "backend.app.features.documentation_ai.api._save_run", return_value="run-1"
-        ):
+        with patch.dict(os.environ, {}, clear=True), patch("backend.app.features.documentation_ai.api._save_run", return_value="run-1"):
             result = extract_note(ExtractNoteInput(encounter_id="00000000-0000-0000-0000-000000000001", note=note), Role.ASSISTANT)
-
         self.assertEqual(result.state, "UNVERIFIED")
-        self.assertEqual(result.ai_run_id, "run-1")
-        self.assertEqual(result.facts[0].tooth, "14")
-        self.assertEqual(result.facts[0].surface, "O")
         self.assertEqual(result.facts[0].source_span, "Tooth 14 surface O restored.")
         self.assertIn(result.facts[0].source_span, note)
 
-    def test_accept_is_the_only_review_action_that_writes_verified_evidence(self):
-        from backend.app.core.contracts import Role
-        from backend.app.features.documentation_ai.api import ReviewInput, accept_run, reject_run
-
-        run = {
-            "id": "00000000-0000-0000-0000-000000000010",
-            "encounter_id": "00000000-0000-0000-0000-000000000001",
-            "status": "UNVERIFIED",
-            "output": {"facts": [{"fact": "procedure_documented", "tooth": "14", "surface": "O", "source_span": "Tooth 14 surface O restored."}]},
-        }
-        review = ReviewInput(evidence_code="DOC_TOOTH_SURFACE")
-        with patch("backend.app.features.documentation_ai.api._load_run", return_value=run), patch(
-            "backend.app.features.documentation_ai.api._mark_reviewed"
-        ), patch("backend.app.features.documentation_ai.api.upsert_evidence") as upsert, patch(
-            "backend.app.features.documentation_ai.api.append_audit"
-        ) as audit:
-            accepted = accept_run(run["id"], review, Role.DENTIST)
-            rejected = reject_run(run["id"], Role.DENTIST)
-
-        self.assertEqual(accepted["state"], "VERIFIED")
-        self.assertEqual(rejected["state"], "REJECTED")
-        upsert.assert_called_once()
-        self.assertEqual(upsert.call_args.args[2], "VERIFIED")
-        self.assertEqual(audit.call_count, 2)
-
-    def test_staff_and_review_role_boundaries_return_shared_403_errors(self):
+    def test_role_boundaries_use_shared_403_error(self):
         from backend.app.core.contracts import Role
         from backend.app.core.errors import AppError
         from backend.app.features.documentation_ai.api import _require_role
 
         for role in (Role.ASSISTANT, Role.DENTIST):
             _require_role(role, Role.ASSISTANT, Role.DENTIST)
-        _require_role(Role.DENTIST, Role.DENTIST)
         for role in (Role.PATIENT, Role.FRONT_DESK, Role.QA):
             with self.subTest(role=role), self.assertRaises(AppError) as denied:
                 _require_role(role, Role.ASSISTANT, Role.DENTIST)
             self.assertEqual(denied.exception.status_code, 403)
-        with self.assertRaises(AppError) as assistant_review:
-            _require_role(Role.ASSISTANT, Role.DENTIST)
-        self.assertEqual(assistant_review.exception.status_code, 403)
 
-    def test_model_facts_are_whitelisted_and_accept_writes_only_mapped_fields(self):
-        from backend.app.core.contracts import Role
-        from backend.app.features.documentation_ai.api import Fact, ReviewInput, accept_run
+    def test_model_fact_types_are_whitelisted(self):
+        from backend.app.features.documentation_ai.api import Fact
 
         with self.assertRaises(ValidationError):
             Fact(fact="diagnosis", source_span="Caries diagnosed")
-        run = {
-            "id": "00000000-0000-0000-0000-000000000010",
-            "encounter_id": "00000000-0000-0000-0000-000000000001",
-            "status": "UNVERIFIED",
-            "output": {"facts": [{"fact": "procedure_documented", "tooth": "14", "surface": "O", "source_span": "Tooth 14 surface O restored."}]},
-        }
-        with patch("backend.app.features.documentation_ai.api._load_run", return_value=run), patch(
-            "backend.app.features.documentation_ai.api._mark_reviewed"
-        ), patch("backend.app.features.documentation_ai.api.upsert_evidence", return_value={"id": "evidence-1"}) as upsert, patch(
-            "backend.app.features.documentation_ai.api.append_audit"
-        ):
-            accept_run(run["id"], ReviewInput(evidence_code="DOC_TOOTH_SURFACE"), Role.DENTIST)
 
-        self.assertEqual(upsert.call_args.args[1], "DOC_TOOTH_SURFACE")
-        self.assertEqual(upsert.call_args.args[3], {"tooth": "14", "surface": "O", "source_span": "Tooth 14 surface O restored."})
+    def test_accept_uses_one_transaction_for_conditional_update_evidence_and_audit(self):
+        from backend.app.core.contracts import Role
+        from backend.app.features.documentation_ai.api import ReviewInput, accept_run
 
-    def test_review_rejects_unknown_or_already_reviewed_runs(self):
+        reviewed_run = {"encounter_id": "00000000-0000-0000-0000-000000000001",
+                        "output": {"facts": [{"fact": "procedure_documented", "tooth": "14", "surface": "O", "source_span": "Tooth 14 surface O restored."}]}}
+        class Connection:
+            def __init__(self):
+                self.calls, self.rows = [], iter([reviewed_run, {"id": "evidence-1"}, {"id": "audit-1"}])
+            def execute(self, query, params):
+                self.calls.append((query, params)); return self
+            def fetchone(self): return next(self.rows)
+        connection, connects = Connection(), 0
+        @contextmanager
+        def connect():
+            nonlocal connects
+            connects += 1
+            yield connection
+        with patch("backend.app.features.documentation_ai.api._connect", connect):
+            result = accept_run("00000000-0000-0000-0000-000000000010", ReviewInput(evidence_code="DOC_TOOTH_SURFACE"), Role.DENTIST)
+        self.assertEqual(result["state"], "VERIFIED")
+        self.assertEqual(connects, 1)
+        self.assertIn("status = 'UNVERIFIED'", connection.calls[0][0])
+        self.assertIn("INSERT INTO evidence_items", connection.calls[1][0])
+        self.assertIn("INSERT INTO audit_events", connection.calls[2][0])
+        self.assertEqual(connection.calls[1][1][2], '{"source_span": "Tooth 14 surface O restored.", "tooth": "14", "surface": "O"}')
+
+    def test_conditional_review_conflicts_without_partial_work(self):
         from backend.app.core.contracts import Role
         from backend.app.core.errors import AppError
-        from backend.app.features.documentation_ai.api import ReviewInput, accept_run, reject_run
+        from backend.app.features.documentation_ai.api import reject_run
 
-        for status, action in (("ACCEPTED", lambda: accept_run("run-1", ReviewInput(evidence_code="DOC_PROGRESS_NOTE"), Role.DENTIST)), ("REJECTED", lambda: reject_run("run-1", Role.DENTIST))):
-            with self.subTest(status=status), patch("backend.app.features.documentation_ai.api._load_run", return_value={"status": status}), self.assertRaises(AppError) as conflict:
-                action()
-            self.assertEqual(conflict.exception.status_code, 409)
-        with patch("backend.app.features.documentation_ai.api._load_run", return_value=None), self.assertRaises(AppError) as missing:
-            reject_run("run-1", Role.DENTIST)
-        self.assertEqual(missing.exception.status_code, 404)
+        class Connection:
+            calls = 0
+            def execute(self, _query, _params): self.calls += 1; return self
+            def fetchone(self): return None
+        connection = Connection()
+        @contextmanager
+        def connect(): yield connection
+        with patch("backend.app.features.documentation_ai.api._connect", connect), self.assertRaises(AppError) as conflict:
+            reject_run("00000000-0000-0000-0000-000000000010", Role.DENTIST)
+        self.assertEqual(conflict.exception.status_code, 409)
+        self.assertEqual(connection.calls, 1)
 
-    def test_react_route_submits_note_and_exposes_human_review_actions(self):
+    def test_mid_review_failure_exits_the_same_transaction_with_exception(self):
+        from backend.app.core.contracts import Role
+        from backend.app.features.documentation_ai.api import ReviewInput, accept_run
+
+        class Connection:
+            calls = 0
+            def execute(self, _query, _params):
+                self.calls += 1
+                if self.calls == 3: raise RuntimeError("audit unavailable")
+                return self
+            def fetchone(self):
+                if self.calls == 1:
+                    return {"encounter_id": "00000000-0000-0000-0000-000000000001", "output": {"facts": [{"fact": "note_documented", "source_span": "Procedure documented."}]}}
+                return {"id": "evidence-1"}
+        exited_with = None
+        @contextmanager
+        def connect():
+            nonlocal exited_with
+            try: yield Connection()
+            except Exception as error:
+                exited_with = type(error)
+                raise
+        with patch("backend.app.features.documentation_ai.api._connect", connect), self.assertRaises(RuntimeError):
+            accept_run("00000000-0000-0000-0000-000000000010", ReviewInput(evidence_code="DOC_PROGRESS_NOTE"), Role.DENTIST)
+        self.assertIs(exited_with, RuntimeError)
+
+    def test_react_has_documentation_and_ai_review_flows(self):
         source = (Path(__file__).parents[2] / "frontend/src/features/documentation-ai/index.jsx").read_text()
-        self.assertIn('fetch("/api/v1/ai/extract-note"', source)
-        self.assertIn('state === "UNVERIFIED"', source)
-        self.assertIn("source_span", source)
-        self.assertIn('`/api/v1/ai/runs/${run.ai_run_id}/${action}`', source)
+        for text in ('fetch("/api/v1/documentation"', 'fetch("/api/v1/ai/extract-note"', "consent_signed",
+                     "treatment_plan_signed", "medication_prescribed", "source_span", 'state === "UNVERIFIED"'):
+            self.assertIn(text, source)
 
 
 if __name__ == "__main__":

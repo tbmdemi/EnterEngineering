@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field, model_validator
 
 from ...core.contracts import Role
 from ...core.errors import AppError
-from ...core.services import _connect, append_audit, upsert_evidence
+from ...core.services import _connect, upsert_evidence
 from ...dependencies import require_demo_role
 
 
@@ -24,13 +24,13 @@ class DocumentationInput(BaseModel):
     progress_note: str = Field(min_length=1)
     tooth: str = Field(min_length=1)
     surface: str = Field(min_length=1)
-    medication_used: bool = False
+    medication_prescribed: bool = False
     medication_detail: Optional[str] = None
 
     @model_validator(mode="after")
     def require_medication_detail(self):
-        if self.medication_used and not (self.medication_detail or "").strip():
-            raise ValueError("medication_detail is required when medication_used is true")
+        if self.medication_prescribed and not (self.medication_detail or "").strip():
+            raise ValueError("medication_detail is required when medication_prescribed is true")
         return self
 
 
@@ -101,19 +101,6 @@ def _save_run(encounter_id: UUID, model_name: str, facts: list[Fact]) -> str:
     return str(row["id"])
 
 
-def _load_run(run_id: UUID):
-    with _connect() as connection:
-        row = connection.execute("SELECT * FROM ai_runs WHERE id = %s", (run_id,)).fetchone()
-    if not row:
-        raise AppError("AI_RUN_NOT_FOUND", "AI run was not found", {"ai_run_id": str(run_id)}, 404)
-    return dict(row)
-
-
-def _mark_reviewed(run_id: UUID, status: str):
-    with _connect() as connection:
-        connection.execute("UPDATE ai_runs SET status = %s WHERE id = %s", (status, run_id))
-
-
 @router.post("/api/v1/documentation")
 def save_documentation(data: DocumentationInput, role: Role = Depends(require_demo_role)):
     _require_role(role, Role.ASSISTANT, Role.DENTIST)
@@ -125,7 +112,7 @@ def save_documentation(data: DocumentationInput, role: Role = Depends(require_de
         values["DOC_CONSENT_SIGNED"] = {"signed": True}
     if data.treatment_plan_signed:
         values["DOC_TREATMENT_PLAN_SIGNED"] = {"signed": True}
-    if data.medication_used:
+    if data.medication_prescribed:
         values["DOC_MEDICATION_DETAILS"] = {"detail": data.medication_detail}
     for code, value in values.items():
         upsert_evidence(data.encounter_id, code, "VERIFIED", value, "FORM", None, role.value)
@@ -146,39 +133,53 @@ def extract_note(data: ExtractNoteInput, role: Role = Depends(require_demo_role)
 @router.post("/api/v1/ai/runs/{run_id}/accept")
 def accept_run(run_id: UUID, review: ReviewInput, role: Role = Depends(require_demo_role)):
     _require_role(role, Role.DENTIST)
-    run = _load_run(run_id)
-    if not run:
-        raise AppError("AI_RUN_NOT_FOUND", "AI run was not found", {"ai_run_id": str(run_id)}, 404)
-    if run["status"] != "UNVERIFIED":
-        raise AppError("AI_RUN_ALREADY_REVIEWED", "AI run has already been reviewed", {"status": run["status"]}, 409)
-    output = run["output"] if isinstance(run["output"], dict) else json.loads(run["output"])
-    try:
-        fact = Fact.model_validate(output["facts"][0])
-    except (KeyError, IndexError, TypeError, ValueError) as error:
-        raise AppError("AI_OUTPUT_INVALID", "AI output cannot be accepted", status_code=400) from error
-    expected_code = FACT_EVIDENCE[fact.fact]
-    if review.evidence_code != expected_code:
-        raise AppError("EVIDENCE_CODE_MISMATCH", "Evidence code does not match extracted fact", {"expected": expected_code}, 400)
-    value = {"source_span": fact.source_span}
-    if fact.fact == "procedure_documented":
-        if not fact.tooth or not fact.surface:
-            raise AppError("AI_OUTPUT_INVALID", "Procedure fact requires tooth and surface", status_code=400)
-        value.update(tooth=fact.tooth, surface=fact.surface)
-    # ponytail: review state and evidence use separate prototype transactions; move both into one shared transaction before concurrent reviewers are supported.
-    evidence = upsert_evidence(run["encounter_id"], expected_code, "VERIFIED", value, "AI_REVIEW", str(run_id), role.value)
-    _mark_reviewed(run_id, "ACCEPTED")
-    append_audit(role.value, "AI_RUN_ACCEPTED", "ai_run", run_id, run["encounter_id"], {"evidence_code": review.evidence_code})
+    with _connect() as connection:
+        run = connection.execute(
+            "UPDATE ai_runs SET status = 'ACCEPTED' WHERE id = %s AND status = 'UNVERIFIED' RETURNING encounter_id, output",
+            (run_id,),
+        ).fetchone()
+        if not run:
+            raise AppError("AI_RUN_ALREADY_REVIEWED", "AI run is missing or has already been reviewed", {"ai_run_id": str(run_id)}, 409)
+        output = run["output"] if isinstance(run["output"], dict) else json.loads(run["output"])
+        try:
+            fact = Fact.model_validate(output["facts"][0])
+        except (KeyError, IndexError, TypeError, ValueError) as error:
+            raise AppError("AI_OUTPUT_INVALID", "AI output cannot be accepted", status_code=400) from error
+        expected_code = FACT_EVIDENCE[fact.fact]
+        if review.evidence_code != expected_code:
+            raise AppError("EVIDENCE_CODE_MISMATCH", "Evidence code does not match extracted fact", {"expected": expected_code}, 400)
+        value = {"source_span": fact.source_span}
+        if fact.fact == "procedure_documented":
+            if not fact.tooth or not fact.surface:
+                raise AppError("AI_OUTPUT_INVALID", "Procedure fact requires tooth and surface", status_code=400)
+            value.update(tooth=fact.tooth, surface=fact.surface)
+        evidence = connection.execute(
+            """INSERT INTO evidence_items (encounter_id, code, state, value, source_type, source_ref, actor_role)
+               VALUES (%s,%s,'VERIFIED',%s::jsonb,'AI_REVIEW',%s,%s)
+               ON CONFLICT (encounter_id, code) DO UPDATE SET state='VERIFIED', value=EXCLUDED.value,
+                 source_type=EXCLUDED.source_type, source_ref=EXCLUDED.source_ref, actor_role=EXCLUDED.actor_role, updated_at=now()
+               RETURNING id""",
+            (run["encounter_id"], expected_code, json.dumps(value), str(run_id), role.value),
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO audit_events (actor_role, action, object_type, object_id, encounter_id, metadata) VALUES (%s,'AI_RUN_ACCEPTED','ai_run',%s,%s,%s::jsonb) RETURNING id",
+            (role.value, run_id, run["encounter_id"], json.dumps({"evidence_code": expected_code})),
+        ).fetchone()
     return {"ai_run_id": str(run_id), "state": "VERIFIED", "evidence_id": str(evidence.get("id", ""))}
 
 
 @router.post("/api/v1/ai/runs/{run_id}/reject")
 def reject_run(run_id: UUID, role: Role = Depends(require_demo_role)):
     _require_role(role, Role.DENTIST)
-    run = _load_run(run_id)
-    if not run:
-        raise AppError("AI_RUN_NOT_FOUND", "AI run was not found", {"ai_run_id": str(run_id)}, 404)
-    if run["status"] != "UNVERIFIED":
-        raise AppError("AI_RUN_ALREADY_REVIEWED", "AI run has already been reviewed", {"status": run["status"]}, 409)
-    _mark_reviewed(run_id, "REJECTED")
-    append_audit(role.value, "AI_RUN_REJECTED", "ai_run", run_id, run["encounter_id"], {})
+    with _connect() as connection:
+        run = connection.execute(
+            "UPDATE ai_runs SET status = 'REJECTED' WHERE id = %s AND status = 'UNVERIFIED' RETURNING encounter_id",
+            (run_id,),
+        ).fetchone()
+        if not run:
+            raise AppError("AI_RUN_ALREADY_REVIEWED", "AI run is missing or has already been reviewed", {"ai_run_id": str(run_id)}, 409)
+        connection.execute(
+            "INSERT INTO audit_events (actor_role, action, object_type, object_id, encounter_id, metadata) VALUES (%s,'AI_RUN_REJECTED','ai_run',%s,%s,'{}'::jsonb) RETURNING id",
+            (role.value, run_id, run["encounter_id"]),
+        ).fetchone()
     return {"ai_run_id": str(run_id), "state": "REJECTED"}

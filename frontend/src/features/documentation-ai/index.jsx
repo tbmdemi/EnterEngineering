@@ -4,6 +4,28 @@ function DocumentationAi() {
   const [run, setRun] = useState(null);
   const [encounterId, setEncounterId] = useState("");
   const [note, setNote] = useState("");
+  const [medicationPrescribed, setMedicationPrescribed] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  async function saveDocumentation(event) {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const response = await fetch("/api/v1/documentation", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Demo-Role": "DENTIST" },
+      body: JSON.stringify({
+        encounter_id: encounterId,
+        consent_signed: form.has("consent_signed"),
+        treatment_plan_signed: form.has("treatment_plan_signed"),
+        progress_note: form.get("progress_note"),
+        medication_prescribed: medicationPrescribed,
+        medication_detail: form.get("medication_detail") || null,
+        tooth: form.get("tooth"),
+        surface: form.get("surface"),
+      }),
+    });
+    setSaved(response.ok);
+  }
 
   async function extract(event) {
     event.preventDefault();
@@ -29,7 +51,20 @@ function DocumentationAi() {
 
   return <section>
     <h2>Documentation &amp; Staff AI</h2>
+    <form onSubmit={saveDocumentation}>
+      <h3>Clinical documentation</h3>
+      <label>Encounter ID<input value={encounterId} onChange={event => setEncounterId(event.target.value)} required /></label>
+      <label><input type="checkbox" name="consent_signed" /> Consent signed</label>
+      <label><input type="checkbox" name="treatment_plan_signed" /> Treatment plan signed</label>
+      <label>Progress note<textarea name="progress_note" required /></label>
+      <label>Tooth<input name="tooth" required /></label>
+      <label>Surface<input name="surface" required /></label>
+      <label><input type="checkbox" name="medication_prescribed" checked={medicationPrescribed} onChange={event => setMedicationPrescribed(event.target.checked)} /> Medication prescribed</label>
+      {medicationPrescribed && <label>Medication details<input name="medication_detail" required /></label>}
+      <button type="submit">Save documentation</button>{saved && <span> Saved</span>}
+    </form>
     <form onSubmit={extract}>
+      <h3>AI note extraction</h3>
       <label>Encounter ID<input value={encounterId} onChange={event => setEncounterId(event.target.value)} required /></label>
       <label>Progress note<textarea name="progress_note" value={note} onChange={event => setNote(event.target.value)} required /></label>
       <button type="submit">Extract note</button>
