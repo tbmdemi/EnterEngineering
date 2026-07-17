@@ -8,6 +8,7 @@ from .features.compliance.router import router as compliance_router
 from .features.documentation_ai import router as documentation_ai_router
 from .features.encounter.router import router as encounter_router
 from .features.pre_treatment import router as pre_treatment_router
+from .features.post_treatment_chat import router as post_treatment_chat_router
 
 
 app = FastAPI(title="CareGuard Dental Demo")
@@ -15,6 +16,7 @@ app.include_router(compliance_router)
 app.include_router(documentation_ai_router)
 app.include_router(encounter_router)
 app.include_router(pre_treatment_router)
+app.include_router(post_treatment_chat_router)
 
 
 @app.exception_handler(AppError)
