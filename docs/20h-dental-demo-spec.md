@@ -1,5 +1,24 @@
 # CareGuard Dental — đặc tả demo 20 giờ
 
+## Chạy local nhanh
+
+```powershell
+# Khởi động lần đầu hoặc sau khi đổi dependency/Dockerfile
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+
+# Những lần chạy tiếp theo
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+# Kiểm tra trạng thái
+docker compose -f docker-compose.yml -f docker-compose.dev.yml ps -a
+```
+
+Mở `http://localhost:5173/encounter`. Khi cần đưa dữ liệu demo về trạng thái ban đầu:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile tools run --rm demo-reset
+```
+
 ## Mục tiêu
 
 Trong 20 giờ, hoàn thành một luồng nha khoa synthetic: mở ca thiếu dữ liệu, bổ sung evidence, human-review AI, kiểm tra trước điều trị, tạo follow-up/handoff, patient chat và xem audit/readiness. Demo chứng minh AI chỉ tìm evidence; rule deterministic và con người quyết định.
@@ -36,4 +55,4 @@ Before merging or extending Module 03, read [its merge-critical context and sour
 - H13–H16: merge theo thứ tự encounter, documentation, pre-treatment, coordination, post-treatment.
 - H16–H20: integration, ba lần chạy demo, code freeze.
 
-Hoàn thành khi `make check` pass, database reset được, và demo 5 phút đi hết luồng. Bắt buộc kiểm tra idempotency task, portal không thấy draft, AI timeout dùng fixture, chat red-flag escalation, overlap bị flag và audit không chứa raw note/chat.
+Hoàn thành khi `make check` pass, database reset được, và demo 5 phút đi hết luồng. Bắt buộc kiểm tra idempotency task, portal không thấy draft, fixture AI deterministic, live AI timeout lưu `ABSTAINED`/chuyển sang checklist thủ công, chat red-flag escalation, overlap bị flag và audit không chứa raw note/chat.

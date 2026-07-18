@@ -59,6 +59,32 @@ class DocumentationAiTest(unittest.TestCase):
         self.assertEqual(result.facts[0].source_span, "Tooth 14 surface O restored.")
         self.assertIn(result.facts[0].source_span, note)
 
+    def test_live_provider_failure_is_audited_abstention_not_silent_fixture(self):
+        from backend.app.core.contracts import Role
+        from backend.app.core.errors import AppError
+        from backend.app.features.documentation_ai.api import ExtractNoteInput, extract_note
+
+        data = ExtractNoteInput(
+            encounter_id="00000000-0000-0000-0000-000000000001",
+            note="Reviewed history without enough supported facts.",
+        )
+        with (
+            patch.dict(os.environ, {"AI_MODE": "live", "MODEL_NAME": "demo-model"}, clear=True),
+            patch("backend.app.features.documentation_ai.api._live_extract", side_effect=TimeoutError("provider timeout")),
+            patch("backend.app.features.documentation_ai.api._save_abstained_run", return_value="run-abstained") as save,
+            self.assertRaises(AppError) as caught,
+        ):
+            extract_note(data, Role.ASSISTANT)
+
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(caught.exception.payload["code"], "AI_PROVIDER_UNAVAILABLE")
+        self.assertEqual(caught.exception.payload["details"], {
+            "ai_run_id": "run-abstained",
+            "state": "ABSTAINED",
+            "manual_fallback": True,
+        })
+        save.assert_called_once_with(data.encounter_id, "demo-model", "PROVIDER_UNAVAILABLE")
+
     def test_role_boundaries_use_shared_403_error(self):
         from backend.app.core.contracts import Role
         from backend.app.core.errors import AppError

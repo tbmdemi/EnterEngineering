@@ -332,7 +332,19 @@ npm.cmd ci
 Set-Location ..
 ```
 
-Chạy unit/contract test và build check:
+Chạy toàn bộ kiểm tra demo bằng một lệnh (script tự bật PostgreSQL/migration, chạy cả integration test và build frontend):
+
+```powershell
+.\scripts\check.ps1
+```
+
+Hoặc dùng GNU Make nếu máy đã cài `make`:
+
+```powershell
+make check
+```
+
+Các lệnh thành phần để chẩn đoán riêng:
 
 ```powershell
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
@@ -343,7 +355,7 @@ npm.cmd run build
 Set-Location ..
 ```
 
-Chạy toàn bộ test, bao gồm PostgreSQL concurrency, migration hardening và full-flow integration:
+Chạy riêng toàn bộ test, bao gồm PostgreSQL concurrency, migration hardening và full-flow integration:
 
 ```powershell
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db migrate
@@ -364,7 +376,14 @@ python3 -m venv .venv
 (cd frontend && npm ci)
 ```
 
-Chạy kiểm tra:
+Chạy toàn bộ kiểm tra demo:
+
+```sh
+sh scripts/check.sh
+# hoặc: make check
+```
+
+Các lệnh thành phần để chẩn đoán riêng:
 
 ```sh
 .venv/bin/python -m unittest discover -s tests -v
@@ -381,7 +400,9 @@ ENCOUNTER_TEST_DATABASE_URL='postgresql://careguard:careguard@localhost:5432/car
   .venv/bin/python -m unittest discover -s tests -v
 ```
 
-`Makefile` hiện là shortcut tùy chọn cho Linux/macOS và dùng base Compose. Khi phát triển hằng ngày hoặc làm việc trên Windows, ưu tiên các lệnh Compose có cả `docker-compose.dev.yml` ở trên.
+`make check` tự chọn `scripts/check.ps1` trên Windows và `scripts/check.sh` trên Linux/macOS. Cả hai dùng Compose development, chạy PostgreSQL integration tests, kiểm tra Compose development/production và build frontend.
+
+Demo mặc định dùng `AI_MODE=fixture` để có kết quả deterministic. Nếu thử `AI_MODE=live`, lỗi provider được lưu dưới dạng `ABSTAINED` và API yêu cầu tiếp tục bằng checklist thủ công; hệ thống không âm thầm giả output live bằng fixture.
 
 ## 10. Thêm hoặc cải tiến feature
 

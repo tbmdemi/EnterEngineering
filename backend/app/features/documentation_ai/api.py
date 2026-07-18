@@ -121,6 +121,23 @@ def _save_run(encounter_id: UUID, model_name: str, facts: list[Fact]) -> str:
     return str(row["id"])
 
 
+def _save_abstained_run(encounter_id: UUID, model_name: str, reason: str) -> str:
+    """Persist a provider failure without storing the raw clinical note."""
+    with _connect() as connection:
+        _require_mutable_encounter_in(connection, encounter_id)
+        row = connection.execute(
+            """INSERT INTO ai_runs (encounter_id, model_name, status, output)
+               VALUES (%s,%s,'ABSTAINED',%s::jsonb) RETURNING id""",
+            (encounter_id, model_name, json.dumps({"facts": [], "reason": reason})),
+        ).fetchone()
+        connection.execute(
+            """INSERT INTO audit_events (actor_role, action, object_type, object_id, encounter_id, metadata)
+               VALUES ('SYSTEM','AI_EXTRACTION_ABSTAINED','ai_run',%s,%s,%s::jsonb)""",
+            (row["id"], encounter_id, json.dumps({"reason": reason, "model_name": model_name})),
+        )
+    return str(row["id"])
+
+
 @router.post("/api/v1/documentation")
 def save_documentation(data: DocumentationInput, role: Role = Depends(require_demo_role)):
     _require_role(role, Role.ASSISTANT, Role.DENTIST)
@@ -168,7 +185,14 @@ def extract_note(data: ExtractNoteInput, role: Role = Depends(require_demo_role)
         try:
             facts, model = _live_extract(data.note)
         except Exception as error:
-            raise AppError("AI_PROVIDER_UNAVAILABLE", "The configured AI provider is unavailable", status_code=503) from error
+            model = os.environ.get("MODEL_NAME") or "unconfigured-provider"
+            run_id = _save_abstained_run(data.encounter_id, model, "PROVIDER_UNAVAILABLE")
+            raise AppError(
+                "AI_PROVIDER_UNAVAILABLE",
+                "The configured AI provider is unavailable; continue with the manual checklist",
+                {"ai_run_id": run_id, "state": "ABSTAINED", "manual_fallback": True},
+                503,
+            ) from error
     else:
         raise AppError("AI_MODE_INVALID", "AI_MODE must be fixture or live", status_code=500)
     run_id = _save_run(data.encounter_id, model, facts)

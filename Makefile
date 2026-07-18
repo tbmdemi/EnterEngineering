@@ -1,4 +1,10 @@
 .PHONY: setup run reset-demo check
+
+ifeq ($(OS),Windows_NT)
+CHECK_COMMAND = powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/check.ps1
+else
+CHECK_COMMAND = sh scripts/check.sh
+endif
 setup:
 	python3 -m venv .venv
 	.venv/bin/pip install -r backend/requirements.txt
@@ -9,7 +15,4 @@ reset-demo:
 	docker compose down -v
 	docker compose up --build
 check:
-	.venv/bin/python -m unittest discover -s tests
-	PYTHONPYCACHEPREFIX=/tmp/careguard-pycache .venv/bin/python -m compileall -q backend
-	docker compose config -q
-	cd frontend && npm run build
+	$(CHECK_COMMAND)

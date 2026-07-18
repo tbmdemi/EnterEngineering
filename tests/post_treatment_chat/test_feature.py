@@ -11,6 +11,9 @@ from backend.app.core.contracts import Role
 from backend.app.core.errors import AppError
 
 
+ROOT = Path(__file__).resolve().parents[2]
+
+
 class FakeConnection:
     def __init__(self, rows=(), one_rows=()):
         self.rows = iter(rows)
@@ -48,6 +51,15 @@ def release_request(service, care_instructions="Care"):
 
 
 class PostTreatmentChatTest(unittest.TestCase):
+    def test_release_ui_preflights_encounter_stage_and_localizes_stage_errors(self):
+        source = (ROOT / "frontend/src/features/post-treatment-chat/index.jsx").read_text(encoding="utf-8")
+
+        self.assertIn("loadEncounterStage", source)
+        self.assertIn('encounterStage === "POST_TREATMENT"', source)
+        self.assertIn('data.code === "ENCOUNTER_NOT_RELEASABLE"', source)
+        self.assertIn('routeHref("/encounter")', source)
+        self.assertIn("!releaseAllowed", source)
+
     def test_release_is_staff_only_stage_gated_and_atomic(self):
         from backend.app.features.post_treatment_chat import service
 
@@ -189,7 +201,7 @@ class PostTreatmentChatTest(unittest.TestCase):
 
         rows = [{"code": "POST_CARE_INSTRUCTIONS", "value": {"text": "Chườm lạnh bên ngoài má."}}]
         connection, connect = connection_for(*rows)
-        with patch.object(service, "_connect", connect), patch.object(service, "append_audit") as audit:
+        with patch.object(service, "require_encounter"), patch.object(service, "_connect", connect), patch.object(service, "append_audit") as audit:
             answer = service.chat(service.ChatRequest(message="Hướng dẫn của tôi là gì?", encounter_id=service.DEMO_ENCOUNTER_ID), Role.PATIENT)
 
         self.assertEqual(answer.intent, "MY_RECORD")
@@ -205,7 +217,7 @@ class PostTreatmentChatTest(unittest.TestCase):
         from backend.app.features.post_treatment_chat import service
 
         connection, connect = connection_for()
-        with patch.object(service, "_connect", connect), patch.object(service, "append_audit"):
+        with patch.object(service, "require_encounter"), patch.object(service, "_connect", connect), patch.object(service, "append_audit"):
             answer = service.chat(service.ChatRequest(message="Hồ sơ của tôi", encounter_id=service.DEMO_ENCOUNTER_ID), Role.PATIENT)
         self.assertEqual(answer.intent, "MY_RECORD")
         self.assertEqual(answer.citations, [])
@@ -214,7 +226,7 @@ class PostTreatmentChatTest(unittest.TestCase):
     def test_faq_and_symptom_cards_require_citations(self):
         from backend.app.features.post_treatment_chat import service
 
-        with patch.object(service, "append_audit"):
+        with patch.object(service, "require_encounter"), patch.object(service, "append_audit"):
             faq = service.chat(service.ChatRequest(message="Giờ mở cửa phòng khám?", encounter_id=service.DEMO_ENCOUNTER_ID), Role.PATIENT)
             symptom = service.chat(service.ChatRequest(message="Đau nhẹ sau nhổ răng có bình thường không?", encounter_id=service.DEMO_ENCOUNTER_ID), Role.PATIENT)
         self.assertEqual(faq.intent, "CLINIC_FAQ")
@@ -226,7 +238,7 @@ class PostTreatmentChatTest(unittest.TestCase):
     def test_red_flag_is_fixed_escalation_and_unknown_abstains(self):
         from backend.app.features.post_treatment_chat import service
 
-        with patch.object(service, "append_audit"):
+        with patch.object(service, "require_encounter"), patch.object(service, "append_audit"):
             red = service.chat(service.ChatRequest(message="Tôi khó thở và sưng lan nhanh", encounter_id=service.DEMO_ENCOUNTER_ID), Role.PATIENT)
             unknown = service.chat(service.ChatRequest(message="Giá bitcoin hôm nay?", encounter_id=service.DEMO_ENCOUNTER_ID), Role.PATIENT)
         self.assertTrue(red.escalation)
@@ -240,6 +252,22 @@ class PostTreatmentChatTest(unittest.TestCase):
         with self.assertRaises(AppError) as caught:
             service.chat(service.ChatRequest(message="Giờ mở cửa?", encounter_id=service.DEMO_ENCOUNTER_ID), Role.DENTIST)
         self.assertEqual(caught.exception.status_code, 403)
+
+    def test_chat_rejects_unknown_encounter_before_answer_or_audit(self):
+        from backend.app.features.post_treatment_chat import service
+
+        missing = AppError("ENCOUNTER_NOT_FOUND", "Encounter was not found", status_code=404)
+        with (
+            patch.object(service, "require_encounter", side_effect=missing),
+            patch.object(service, "append_audit") as audit,
+            self.assertRaises(AppError) as caught,
+        ):
+            service.chat(
+                service.ChatRequest(message="Giờ mở cửa?", encounter_id=service.DEMO_ENCOUNTER_ID),
+                Role.PATIENT,
+            )
+        self.assertEqual(caught.exception.status_code, 404)
+        audit.assert_not_called()
 
     def test_approved_cards_fixture_has_versioned_provenance(self):
         from backend.app.features.post_treatment_chat import service

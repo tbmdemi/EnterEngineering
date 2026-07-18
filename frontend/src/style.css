@@ -69,6 +69,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .demo-context-controls input { width: min(22rem, 38vw); padding: 0 0.7rem; }
 .demo-context-controls .demo-access-control input { width: min(13rem, 24vw); }
 .demo-context-controls select { padding: 0 2rem 0 0.7rem; }
+.demo-context-controls .demo-language-control select { min-width: 8rem; }
 
 .app-module-nav {
   display: flex;
@@ -157,6 +158,64 @@ main { min-height: 30rem; }
 .module-pager > div span { color: var(--muted); font-size: 0.7rem; font-weight: 800; }
 .app-footer { display: flex; justify-content: space-between; padding: 1.2rem clamp(1rem, 4vw, 3rem); border-top: 1px solid var(--line); color: var(--muted); font-size: 0.72rem; }
 
+.help-is-open { overflow: hidden; }
+.help-launcher {
+  position: fixed;
+  z-index: 30;
+  right: clamp(1rem, 3vw, 2rem);
+  bottom: clamp(1rem, 3vw, 2rem);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: 2.9rem;
+  padding: 0.55rem 0.9rem 0.55rem 0.55rem;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 2rem;
+  background: var(--brand-dark);
+  color: #fff;
+  font-size: 0.78rem;
+  font-weight: 850;
+  box-shadow: 0 12px 32px rgba(16, 63, 54, 0.25);
+  cursor: pointer;
+}
+.help-launcher span { display: grid; width: 1.75rem; height: 1.75rem; place-items: center; border-radius: 50%; background: var(--accent); color: #2f2919; font-size: 1rem; }
+.help-launcher:hover { background: var(--brand); transform: translateY(-1px); }
+.help-backdrop {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+  background: rgba(9, 28, 24, 0.62);
+  backdrop-filter: blur(4px);
+}
+.help-dialog {
+  width: min(34rem, 100%);
+  max-height: min(46rem, calc(100vh - 2rem));
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 1.1rem;
+  background: var(--surface);
+  box-shadow: 0 30px 80px rgba(5, 27, 22, 0.3);
+}
+.help-dialog > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; padding: 1.4rem 1.5rem 1rem; border-bottom: 1px solid var(--line); }
+.help-dialog > header div { display: grid; gap: 0.2rem; }
+.help-dialog > header span { color: var(--brand); font-size: 0.68rem; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; }
+.help-dialog h2 { margin: 0; color: var(--brand-dark); font-size: 1.45rem; }
+.help-dialog > header button { display: grid; width: 2.25rem; height: 2.25rem; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: #f7faf8; color: var(--brand-dark); font-size: 1.35rem; cursor: pointer; }
+.help-summary { margin: 0; padding: 1.15rem 1.5rem 0; color: var(--muted); line-height: 1.55; }
+.help-dialog ol { display: grid; gap: 0.7rem; margin: 0; padding: 1.1rem 1.5rem; list-style: none; }
+.help-dialog li { display: flex; align-items: center; gap: 0.8rem; padding: 0.8rem; border: 1px solid var(--line); border-radius: 0.75rem; background: #f8fbf9; color: var(--ink); line-height: 1.4; }
+.help-dialog li i { display: grid; flex: 0 0 1.8rem; width: 1.8rem; height: 1.8rem; place-items: center; border-radius: 50%; background: #dcefe8; color: var(--brand-dark); font-size: 0.72rem; font-style: normal; font-weight: 900; }
+.help-dialog aside { margin: 0 1.5rem 1.15rem; padding: 0.9rem 1rem; border-left: 4px solid var(--accent); border-radius: 0.3rem 0.7rem 0.7rem 0.3rem; background: #fff9eb; }
+.help-dialog aside strong { color: #6b5019; font-size: 0.78rem; }
+.help-dialog aside p { margin: 0.25rem 0 0; color: #6e6142; font-size: 0.78rem; line-height: 1.5; }
+.help-dialog > footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem 1.5rem 1.4rem; }
+.help-dialog > footer button, .help-dialog > footer a { min-height: 2.55rem; padding: 0.65rem 1rem; border-radius: 0.6rem; font-size: 0.78rem; font-weight: 850; cursor: pointer; }
+.help-dialog > footer button { border: 0; background: var(--brand); color: #fff; }
+.help-dialog > footer a { color: var(--brand); text-decoration: none; }
+
 .route-not-found { display: grid; min-height: 100vh; place-content: center; justify-items: center; }
 .route-not-found p { color: var(--brand); font-weight: 800; }
 .route-not-found a { color: var(--brand); font-weight: 800; }
@@ -180,4 +239,8 @@ main { min-height: 30rem; }
   .module-pager > a { min-width: 0; }
   .module-pager strong { font-size: 0.78rem; }
   .app-footer { align-items: flex-start; flex-direction: column; gap: 0.35rem; }
+  .help-launcher { width: 2.9rem; padding: 0.55rem; overflow: hidden; white-space: nowrap; }
+  .help-launcher span { flex: 0 0 1.75rem; }
+  .help-dialog > footer { align-items: stretch; flex-direction: column; }
+  .help-dialog > footer button, .help-dialog > footer a { text-align: center; }
 }

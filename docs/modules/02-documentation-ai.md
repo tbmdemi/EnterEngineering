@@ -51,7 +51,9 @@ Form có thể tạo:
 
 String input được trim và từ chối nếu chỉ có whitespace. Evaluator kiểm tra content bên trong; nhãn `VERIFIED` đơn lẻ không đủ để thỏa obligation.
 
-AI-accepted evidence dùng `source_type=AI_REVIEW`, `source_ref=ai_run_id` và lưu `source_span`. Live provider output bị validate tại boundary; source span phải xuất hiện trong note gốc. Provider thiếu cấu hình, timeout hoặc output không hợp lệ sẽ dùng fixture deterministic cùng schema.
+AI-accepted evidence dùng `source_type=AI_REVIEW`, `source_ref=ai_run_id` và lưu `source_span`. Live provider output bị validate tại boundary; source span phải xuất hiện trong note gốc.
+
+`AI_MODE=fixture` là chế độ demo deterministic. Với `AI_MODE=live`, provider thiếu cấu hình, timeout hoặc output không hợp lệ không được âm thầm đổi thành fixture: hệ thống lưu một `ai_runs.status=ABSTAINED`, ghi audit không chứa raw note và trả `503 AI_PROVIDER_UNAVAILABLE` kèm `manual_fallback=true`. Checklist/form thủ công vẫn hoạt động độc lập.
 
 ## HTTP contract
 
@@ -78,7 +80,7 @@ Audit chỉ ghi action, actor, object, encounter và evidence code; không ghi r
 
 - Role boundary được enforce ở backend, không phụ thuộc nút UI.
 - Medication conditional field và whitespace được validate.
-- Live/fixture output luôn bắt đầu `UNVERIFIED`.
+- Fixture/live output hợp lệ luôn bắt đầu `UNVERIFIED`; live failure được lưu `ABSTAINED` và không tạo evidence.
 - Chỉ Dentist accept/reject; repeated review trả conflict.
 - Save/AI review trên `CLOSED` bị chặn và không để lại partial state.
 - Audit không chứa raw note.

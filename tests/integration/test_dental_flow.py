@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from unittest.mock import patch
 
 from backend.app.main import app
 
@@ -149,3 +150,46 @@ class DentalFlowIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(immutable.status_code, 409)
         self.assertEqual(immutable.json()["code"], "ENCOUNTER_CLOSED")
+
+    def test_live_ai_failure_persists_abstention_without_raw_note(self):
+        raw_note = "Sensitive synthetic note that must not be stored on provider failure."
+        with patch.dict(os.environ, {"AI_MODE": "live"}, clear=False):
+            for name in ("MODEL_BASE_URL", "MODEL_API_KEY", "MODEL_NAME"):
+                os.environ.pop(name, None)
+            response = self.client.post(
+                "/api/v1/ai/extract-note",
+                headers={"X-Demo-Role": "ASSISTANT"},
+                json={"encounter_id": str(self.encounter_id), "note": raw_note},
+            )
+
+        self.assertEqual(response.status_code, 503, response.text)
+        self.assertEqual(response.json()["code"], "AI_PROVIDER_UNAVAILABLE")
+        self.assertEqual(response.json()["details"]["state"], "ABSTAINED")
+        self.assertTrue(response.json()["details"]["manual_fallback"])
+
+        import psycopg
+        from psycopg.rows import dict_row
+
+        with psycopg.connect(DATABASE_URL, row_factory=dict_row) as connection:
+            run = connection.execute(
+                "SELECT status, output FROM ai_runs WHERE id = %s",
+                (response.json()["details"]["ai_run_id"],),
+            ).fetchone()
+            audit = connection.execute(
+                """SELECT metadata FROM audit_events
+                   WHERE encounter_id = %s AND action = 'AI_EXTRACTION_ABSTAINED'
+                   ORDER BY created_at DESC LIMIT 1""",
+                (self.encounter_id,),
+            ).fetchone()
+        self.assertEqual(run["status"], "ABSTAINED")
+        self.assertNotIn(raw_note, str(run["output"]))
+        self.assertNotIn(raw_note, str(audit["metadata"]))
+
+    def test_patient_chat_rejects_unknown_encounter_with_stable_contract(self):
+        response = self.client.post(
+            "/api/v1/portal/chat",
+            headers={"X-Demo-Role": "PATIENT"},
+            json={"encounter_id": str(uuid4()), "message": "Giờ mở cửa?"},
+        )
+        self.assertEqual(response.status_code, 404, response.text)
+        self.assertEqual(response.json()["code"], "ENCOUNTER_NOT_FOUND")

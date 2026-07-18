@@ -172,6 +172,18 @@ class FoundationContractTest(unittest.TestCase):
         self.assertIn("preDeployCommand: python /app/migrate.py", render)
         self.assertIn("ports: !reset []", production_compose)
 
+    def test_cross_platform_demo_check_scripts_cover_database_tests_and_frontend_build(self):
+        powershell = (ROOT / "scripts/check.ps1").read_text(encoding="utf-8")
+        shell = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        for source in (powershell, shell):
+            self.assertIn("ENCOUNTER_TEST_DATABASE_URL", source)
+            self.assertIn("unittest discover -s tests -v", source)
+            self.assertIn("docker-compose.prod.yml", source)
+            self.assertIn("run build", source)
+        self.assertIn("scripts/check.ps1", makefile)
+        self.assertIn("scripts/check.sh", makefile)
+
     def test_core_services_json_encode_uuid_values(self):
         from backend.app.core import services
 
@@ -213,6 +225,43 @@ class FoundationContractTest(unittest.TestCase):
         with patch.object(services, "_connect", fake_connect):
             services.ensure_task("enc", "COORD_SCHEDULE_CLEAR", "RESOLVE_SCHEDULE_CONFLICT", "FRONT_DESK", None, "coord:enc:schedule-conflict")
         self.assertIn("status = CASE WHEN tasks.status = 'CANCELLED' THEN 'OPEN'", connection.query)
+
+    def test_frontend_has_shared_persistent_language_context(self):
+        context = (ROOT / "frontend/src/demo-context.jsx").read_text(encoding="utf-8")
+        shell = (ROOT / "frontend/src/main.jsx").read_text(encoding="utf-8")
+        feature_files = (
+            "encounter/index.jsx",
+            "documentation-ai/index.jsx",
+            "pre-treatment/index.jsx",
+            "coordination/index.jsx",
+            "post-treatment-chat/index.jsx",
+            "compliance/index.jsx",
+        )
+
+        self.assertIn('localStorage.getItem("careguard.language")', context)
+        self.assertIn('localStorage.setItem("careguard.language"', context)
+        self.assertIn("document.documentElement.lang", context)
+        self.assertIn("setLanguage", context)
+        self.assertIn("lang=${context.language}", context)
+        self.assertIn('<option value="vi">Tiếng Việt</option>', shell)
+        self.assertIn('<option value="en">English</option>', shell)
+        for relative_path in feature_files:
+            source = (ROOT / "frontend/src/features" / relative_path).read_text(encoding="utf-8")
+            self.assertIn("tr", source, relative_path)
+
+    def test_frontend_has_contextual_accessible_help_dialog(self):
+        shell = (ROOT / "frontend/src/main.jsx").read_text(encoding="utf-8")
+        styles = (ROOT / "frontend/src/style.css").read_text(encoding="utf-8")
+
+        self.assertIn("const ROUTE_HELP", shell)
+        for route in ("/encounter", "/documentation-ai", "/pre-treatment", "/coordination", "/post-treatment", "/compliance"):
+            self.assertIn(f'"{route}":', shell)
+        self.assertIn('role="dialog"', shell)
+        self.assertIn('aria-modal="true"', shell)
+        self.assertIn('event.key === "Escape"', shell)
+        self.assertIn("dialogRef.current?.focus()", shell)
+        self.assertIn(".help-launcher", styles)
+        self.assertIn(".help-dialog", styles)
 
 
 if __name__ == "__main__":

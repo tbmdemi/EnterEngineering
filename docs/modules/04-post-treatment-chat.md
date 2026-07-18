@@ -60,6 +60,7 @@ Nếu payload thay đổi khi Encounter vẫn ở `POST_TREATMENT`, release cậ
 
 - Chỉ `PATIENT` được gọi.
 - Không còn fallback sang một Encounter seed hard-code; caller phải gửi `encounter_id`.
+- Encounter không tồn tại trả `404 ENCOUNTER_NOT_FOUND` trước khi answer/audit, thay vì lỗi khóa ngoại hoặc response giả.
 - `MY_RECORD` chỉ query evidence `VERIFIED` có `released_to_patient_at`.
 - `CLINIC_FAQ` và `SYMPTOM_INFO` chỉ trả approved card kèm citation.
 - Ngoài nguồn cho phép thì abstain.
@@ -76,7 +77,7 @@ Response:
 }
 ```
 
-Demo hiện dùng dữ liệu synthetic và role header; target product phải kiểm tra patient/proxy grant để bảo đảm Patient chỉ truy cập Encounter của mình.
+Demo hiện dùng dữ liệu synthetic và role header; kiểm tra tồn tại không thay thế authorization ownership. Target product phải kiểm tra patient/proxy grant để bảo đảm Patient chỉ truy cập Encounter của mình.
 
 ## CLOSED invariant và follow-up
 

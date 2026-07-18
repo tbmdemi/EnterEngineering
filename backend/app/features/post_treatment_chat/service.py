@@ -8,7 +8,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstrai
 
 from ...core.contracts import Role
 from ...core.errors import AppError
-from ...core.services import _connect, append_audit
+from ...core.services import _connect, append_audit, require_encounter
 
 
 DEMO_ENCOUNTER_ID = "00000000-0000-0000-0000-000000000003"
@@ -179,6 +179,10 @@ def _audit_chat(encounter_id, intent, citations, escalation):
 
 def chat(payload, role):
     _require(role, {Role.PATIENT})
+    # Demo identity is intentionally limited to a role header, but every chat
+    # must still reference a real synthetic Encounter before it can read or
+    # append audit data. Target product adds patient/proxy ownership checks.
+    require_encounter(payload.encounter_id)
     message = payload.message.casefold()
     cards = APPROVED_CARDS["cards"]
     emergency = next(card for card in cards if card.get("escalation"))
