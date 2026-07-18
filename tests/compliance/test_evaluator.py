@@ -58,7 +58,7 @@ class ComplianceEvaluatorTest(unittest.TestCase):
         from backend.app.features.compliance.evaluator import derive_context, evaluate
 
         evidence = {
-            "DOC_CONSENT_SIGNED": {"state": "VERIFIED", "value": {}},
+            "DOC_CONSENT_SIGNED": {"state": "VERIFIED", "value": {"signed": True}},
             "DOC_PROGRESS_NOTE": {"state": "DRAFT", "value": {}},
             "DOC_MEDICATION_PRESCRIBED": {"state": "VERIFIED", "value": {"prescribed": False}},
             "PRE_PROCEDURE": {"state": "VERIFIED", "value": {"requires_imaging": False}},
@@ -71,10 +71,28 @@ class ComplianceEvaluatorTest(unittest.TestCase):
         self.assertEqual(result["DOC_MEDICATION_DETAILS"]["state"], "NOT_APPLICABLE")
         self.assertEqual(result["PRE_IMAGING"]["state"], "NOT_APPLICABLE")
 
+    def test_verified_label_does_not_satisfy_structurally_invalid_evidence(self):
+        from backend.app.features.compliance.evaluator import evaluate
+
+        evidence = {
+            "DOC_CONSENT_SIGNED": {"state": "VERIFIED", "value": {"signed": False}},
+            "PRE_ALLERGY": {"state": "VERIFIED", "value": {}},
+            "PRE_VITALS": {"state": "VERIFIED", "value": {"systolic": 0, "diastolic": 80, "pulse": 72}},
+            "PRE_STERILIZATION": {"state": "VERIFIED", "value": {"confirmed": True}},
+        }
+        result = {item["code"]: item for item in evaluate(evidence)}
+
+        for code in evidence:
+            self.assertEqual(result[code]["state"], "UNVERIFIED", code)
+
     def test_unknown_conditional_context_stays_missing(self):
         from backend.app.features.compliance.evaluator import derive_context, evaluate
 
-        result = {item["code"]: item for item in evaluate({}, derive_context({}))}
+        evidence = {
+            "DOC_MEDICATION_DETAILS": {"state": "VERIFIED", "value": {"detail": "Synthetic medication"}},
+            "PRE_IMAGING": {"state": "VERIFIED", "value": {"reviewed": True, "imaging_reference": "XRAY-1", "performed_at": "2026-07-18T01:00:00Z"}},
+        }
+        result = {item["code"]: item for item in evaluate(evidence, derive_context(evidence))}
 
         self.assertEqual(result["DOC_MEDICATION_DETAILS"]["state"], "MISSING")
         self.assertEqual(result["PRE_IMAGING"]["state"], "MISSING")
@@ -109,6 +127,34 @@ class ComplianceEvaluatorTest(unittest.TestCase):
         self.assertTrue(any(code.startswith("COORD_") for code in codes))
         self.assertEqual(len(codes), len(POLICY))
 
+    def test_obligations_are_scoped_to_the_clinical_stage(self):
+        from backend.app.features.compliance.evaluator import (
+            POLICY_CODES,
+            active_codes_for_stage,
+            required_codes_for_transition,
+        )
+
+        self.assertEqual(active_codes_for_stage("CHECK_IN"), set())
+        self.assertIn("PRE_ALLERGY", active_codes_for_stage("PRE_TREATMENT"))
+        self.assertNotIn("POST_RECALL", active_codes_for_stage("PRE_TREATMENT"))
+        self.assertIn("DOC_PROGRESS_NOTE", active_codes_for_stage("TREATMENT"))
+        self.assertEqual(active_codes_for_stage("POST_TREATMENT"), POLICY_CODES)
+        self.assertIn("DOC_CONSENT_SIGNED", required_codes_for_transition("TREATMENT"))
+        self.assertNotIn("DOC_PROGRESS_NOTE", required_codes_for_transition("TREATMENT"))
+        self.assertIn("DOC_PROGRESS_NOTE", required_codes_for_transition("POST_TREATMENT"))
+        self.assertEqual(required_codes_for_transition("CLOSED"), POLICY_CODES)
+
+    def test_partial_evaluation_does_not_create_future_stage_findings(self):
+        from backend.app.features.compliance.evaluator import evaluate, required_codes_for_transition
+
+        checks = evaluate({}, codes=required_codes_for_transition("TREATMENT"))
+        codes = {item["code"] for item in checks}
+
+        self.assertIn("PRE_ALLERGY", codes)
+        self.assertIn("DOC_CONSENT_SIGNED", codes)
+        self.assertNotIn("POST_RECALL", codes)
+        self.assertTrue(all(item["state"] == "MISSING" for item in checks))
+
     def test_task_keys_are_stable_across_repeated_evaluation(self):
         from backend.app.features.compliance.evaluator import task_key
 
@@ -117,6 +163,37 @@ class ComplianceEvaluatorTest(unittest.TestCase):
 
         self.assertEqual(first, second)
         self.assertEqual(first, "enc-1:PRE_ALLERGY:dental-policy.v1")
+
+    def test_close_readiness_blocks_every_non_ready_obligation(self):
+        from backend.app.features.compliance.service import blockers
+
+        checks = [
+            {"code": "PRE_ALLERGY", "state": "SATISFIED", "owner_role": "ASSISTANT"},
+            {"code": "PRE_IMAGING", "state": "NOT_APPLICABLE", "owner_role": "DENTIST"},
+            {"code": "POST_RECALL", "state": "MISSING", "owner_role": "FRONT_DESK"},
+            {"code": "DOC_PROGRESS_NOTE", "state": "UNVERIFIED", "owner_role": "DENTIST"},
+        ]
+
+        self.assertEqual(
+            [item["code"] for item in blockers(checks)],
+            ["POST_RECALL", "DOC_PROGRESS_NOTE"],
+        )
+
+    def test_shared_demo_context_replaces_feature_hard_coded_roles(self):
+        root = Path(__file__).parents[2]
+        context = (root / "frontend/src/demo-context.jsx").read_text(encoding="utf-8")
+        self.assertIn("URLSearchParams", context)
+        self.assertIn("careguard.demoRole", context)
+        self.assertIn("careguard.encounterId", context)
+        for path in (
+            "documentation-ai/index.jsx",
+            "pre-treatment/index.jsx",
+            "coordination/index.jsx",
+            "post-treatment-chat/index.jsx",
+            "compliance/index.jsx",
+        ):
+            source = (root / "frontend/src/features" / path).read_text(encoding="utf-8")
+            self.assertIn("useDemoContext", source, path)
 
 
 if __name__ == "__main__":

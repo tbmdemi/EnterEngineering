@@ -28,10 +28,11 @@ class DocumentationAiTest(unittest.TestCase):
         class Connection:
             def __init__(self): self.calls = []
             def execute(self, query, params): self.calls.append((query, params)); return self
+            def fetchone(self): return {"stage": "TREATMENT"}
         connection = Connection()
         @contextmanager
         def connect(): yield connection
-        with patch("backend.app.features.documentation_ai.api.require_encounter"), patch("backend.app.features.documentation_ai.api._connect", connect):
+        with patch("backend.app.features.documentation_ai.api._connect", connect):
             result = save_documentation(data, Role.DENTIST)
         self.assertEqual(sum("INSERT INTO evidence_items" in call[0] for call in connection.calls), 6)
         self.assertIn("DELETE FROM evidence_items", connection.calls[-2][0])
@@ -42,7 +43,7 @@ class DocumentationAiTest(unittest.TestCase):
         data = DocumentationInput(encounter_id="00000000-0000-0000-0000-000000000001", consent_signed=False,
                                   treatment_plan_signed=False, progress_note="Completed.", tooth="14", surface="O")
         connection = Connection()
-        with patch("backend.app.features.documentation_ai.api.require_encounter"), patch("backend.app.features.documentation_ai.api._connect", connect):
+        with patch("backend.app.features.documentation_ai.api._connect", connect):
             save_documentation(data, Role.DENTIST)
         deleted_codes = connection.calls[-2][1][1]
         self.assertEqual(set(deleted_codes), {"DOC_CONSENT_SIGNED", "DOC_TREATMENT_PLAN_SIGNED", "DOC_MEDICATION_DETAILS"})
@@ -52,11 +53,37 @@ class DocumentationAiTest(unittest.TestCase):
         from backend.app.features.documentation_ai.api import ExtractNoteInput, extract_note
 
         note = "Reviewed history. Tooth 14 surface O restored. Patient tolerated procedure."
-        with patch.dict(os.environ, {}, clear=True), patch("backend.app.features.documentation_ai.api.require_encounter"), patch("backend.app.features.documentation_ai.api._save_run", return_value="run-1"):
+        with patch.dict(os.environ, {}, clear=True), patch("backend.app.features.documentation_ai.api._save_run", return_value="run-1"):
             result = extract_note(ExtractNoteInput(encounter_id="00000000-0000-0000-0000-000000000001", note=note), Role.ASSISTANT)
         self.assertEqual(result.state, "UNVERIFIED")
         self.assertEqual(result.facts[0].source_span, "Tooth 14 surface O restored.")
         self.assertIn(result.facts[0].source_span, note)
+
+    def test_live_provider_failure_is_audited_abstention_not_silent_fixture(self):
+        from backend.app.core.contracts import Role
+        from backend.app.core.errors import AppError
+        from backend.app.features.documentation_ai.api import ExtractNoteInput, extract_note
+
+        data = ExtractNoteInput(
+            encounter_id="00000000-0000-0000-0000-000000000001",
+            note="Reviewed history without enough supported facts.",
+        )
+        with (
+            patch.dict(os.environ, {"AI_MODE": "live", "MODEL_NAME": "demo-model"}, clear=True),
+            patch("backend.app.features.documentation_ai.api._live_extract", side_effect=TimeoutError("provider timeout")),
+            patch("backend.app.features.documentation_ai.api._save_abstained_run", return_value="run-abstained") as save,
+            self.assertRaises(AppError) as caught,
+        ):
+            extract_note(data, Role.ASSISTANT)
+
+        self.assertEqual(caught.exception.status_code, 503)
+        self.assertEqual(caught.exception.payload["code"], "AI_PROVIDER_UNAVAILABLE")
+        self.assertEqual(caught.exception.payload["details"], {
+            "ai_run_id": "run-abstained",
+            "state": "ABSTAINED",
+            "manual_fallback": True,
+        })
+        save.assert_called_once_with(data.encounter_id, "demo-model", "PROVIDER_UNAVAILABLE")
 
     def test_role_boundaries_use_shared_403_error(self):
         from backend.app.core.contracts import Role
@@ -69,6 +96,35 @@ class DocumentationAiTest(unittest.TestCase):
             with self.subTest(role=role), self.assertRaises(AppError) as denied:
                 _require_role(role, Role.ASSISTANT, Role.DENTIST)
             self.assertEqual(denied.exception.status_code, 403)
+
+    def test_closed_encounter_rejects_documentation_before_writing_evidence(self):
+        from backend.app.core.contracts import Role
+        from backend.app.core.errors import AppError
+        from backend.app.features.documentation_ai.api import DocumentationInput, save_documentation
+
+        data = DocumentationInput(
+            encounter_id="00000000-0000-0000-0000-000000000001",
+            consent_signed=True,
+            treatment_plan_signed=True,
+            progress_note="Completed.",
+            tooth="14",
+            surface="O",
+        )
+
+        class Connection:
+            def __init__(self): self.calls = []
+            def execute(self, query, params): self.calls.append((query, params)); return self
+            def fetchone(self): return {"stage": "CLOSED"}
+
+        connection = Connection()
+        @contextmanager
+        def connect(): yield connection
+
+        with patch("backend.app.features.documentation_ai.api._connect", connect), self.assertRaises(AppError) as caught:
+            save_documentation(data, Role.DENTIST)
+
+        self.assertEqual(caught.exception.payload["code"], "ENCOUNTER_CLOSED")
+        self.assertFalse(any("INSERT INTO evidence_items" in query for query, _params in connection.calls))
 
     def test_model_fact_types_are_whitelisted(self):
         from backend.app.features.documentation_ai.api import Fact
@@ -84,7 +140,7 @@ class DocumentationAiTest(unittest.TestCase):
                         "output": {"facts": [{"fact": "procedure_documented", "tooth": "14", "surface": "O", "source_span": "Tooth 14 surface O restored."}]}}
         class Connection:
             def __init__(self):
-                self.calls, self.rows = [], iter([reviewed_run, {"id": "evidence-1"}, {"id": "audit-1"}])
+                self.calls, self.rows = [], iter([reviewed_run, {"stage": "TREATMENT"}, {"id": "evidence-1"}, {"id": "audit-1"}])
             def execute(self, query, params):
                 self.calls.append((query, params)); return self
             def fetchone(self): return next(self.rows)
@@ -99,9 +155,10 @@ class DocumentationAiTest(unittest.TestCase):
         self.assertEqual(result["state"], "VERIFIED")
         self.assertEqual(connects, 1)
         self.assertIn("status = 'UNVERIFIED'", connection.calls[0][0])
-        self.assertIn("INSERT INTO evidence_items", connection.calls[1][0])
-        self.assertIn("INSERT INTO audit_events", connection.calls[2][0])
-        self.assertEqual(connection.calls[1][1][2], '{"source_span": "Tooth 14 surface O restored.", "tooth": "14", "surface": "O"}')
+        self.assertIn("FOR UPDATE", connection.calls[1][0])
+        self.assertIn("INSERT INTO evidence_items", connection.calls[2][0])
+        self.assertIn("INSERT INTO audit_events", connection.calls[3][0])
+        self.assertEqual(connection.calls[2][1][2], '{"source_span": "Tooth 14 surface O restored.", "tooth": "14", "surface": "O"}')
 
     def test_conditional_review_distinguishes_missing_from_already_reviewed(self):
         from backend.app.core.contracts import Role
@@ -135,11 +192,13 @@ class DocumentationAiTest(unittest.TestCase):
             calls = 0
             def execute(self, _query, _params):
                 self.calls += 1
-                if self.calls == 3: raise RuntimeError("audit unavailable")
+                if self.calls == 4: raise RuntimeError("audit unavailable")
                 return self
             def fetchone(self):
                 if self.calls == 1:
                     return {"encounter_id": "00000000-0000-0000-0000-000000000001", "output": {"facts": [{"fact": "note_documented", "source_span": "Procedure documented."}]}}
+                if self.calls == 2:
+                    return {"stage": "TREATMENT"}
                 return {"id": "evidence-1"}
         exited_with = None
         @contextmanager
@@ -155,7 +214,7 @@ class DocumentationAiTest(unittest.TestCase):
 
     def test_react_has_documentation_and_ai_review_flows(self):
         source = (Path(__file__).parents[2] / "frontend/src/features/documentation-ai/index.jsx").read_text(encoding="utf-8")
-        for text in ('fetch("/api/v1/documentation"', 'fetch("/api/v1/ai/extract-note"', "consent_signed",
+        for text in ('apiFetch("/api/v1/documentation"', 'apiFetch("/api/v1/ai/extract-note"', "consent_signed",
                      "treatment_plan_signed", "medication_prescribed", "source_span", 'state === "UNVERIFIED"'):
             self.assertIn(text, source)
 

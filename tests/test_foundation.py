@@ -43,6 +43,19 @@ class FoundationContractTest(unittest.TestCase):
             self.assertEqual(set(caught.exception.payload), {"code", "message", "details"})
         self.assertEqual(parse_demo_role("DENTIST").value, "DENTIST")
 
+    def test_optional_demo_access_key_is_compared_server_side(self):
+        from backend.app.core.errors import AppError
+        from backend.app.core.security import require_demo_access
+
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertIsNone(require_demo_access(None))
+        with patch.dict("os.environ", {"DEMO_ACCESS_TOKEN": "server-secret"}, clear=True):
+            self.assertIsNone(require_demo_access("server-secret"))
+            for value in (None, "wrong"):
+                with self.subTest(value=value), self.assertRaises(AppError) as caught:
+                    require_demo_access(value)
+                self.assertEqual(caught.exception.payload["code"], "DEMO_ACCESS_DENIED")
+
     def test_core_services_persist_and_return_dicts_idempotently(self):
         from backend.app.core import services
 
@@ -124,6 +137,53 @@ class FoundationContractTest(unittest.TestCase):
         self.assertIn("API_PROXY_TARGET", config)
         self.assertIn("API_PROXY_TARGET: http://api:8000", compose)
 
+    def test_compose_runs_idempotent_migrations_before_api(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        migration = (ROOT / "db/migrations/001_integrated_demo.sql").read_text(encoding="utf-8")
+        runner = (ROOT / "backend/migrate.py").read_text(encoding="utf-8")
+        baseline = (ROOT / "db/migrations/000_baseline.sql").read_text(encoding="utf-8")
+
+        self.assertIn("migrate:", compose)
+        self.assertIn("condition: service_completed_successfully", compose)
+        self.assertIn("schema_migrations", runner)
+        self.assertIn("pg_advisory_lock", runner)
+        self.assertIn("CREATE TABLE IF NOT EXISTS encounters", baseline)
+        self.assertIn("ADD COLUMN IF NOT EXISTS released_to_patient_at", migration)
+        self.assertIn("ON CONFLICT DO NOTHING", migration)
+
+    def test_deployment_assets_define_production_runtime_and_public_health(self):
+        from backend.app.main import app
+
+        paths = {route.path for route in app.routes}
+        self.assertIn("/api/health/live", paths)
+        self.assertIn("/api/health/ready", paths)
+
+        frontend_dockerfile = (ROOT / "frontend/Dockerfile").read_text(encoding="utf-8")
+        nginx = (ROOT / "frontend/nginx.conf").read_text(encoding="utf-8")
+        render = (ROOT / "render.yaml").read_text(encoding="utf-8")
+        production_compose = (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+        api_client = (ROOT / "frontend/src/api.js").read_text(encoding="utf-8")
+
+        self.assertIn("FROM nginx:alpine AS production", frontend_dockerfile)
+        self.assertIn("try_files $uri $uri/ /index.html", nginx)
+        self.assertIn("VITE_API_BASE_URL", api_client)
+        self.assertIn("X-Demo-Access-Token", api_client)
+        self.assertIn("healthCheckPath: /api/health/ready", render)
+        self.assertIn("preDeployCommand: python /app/migrate.py", render)
+        self.assertIn("ports: !reset []", production_compose)
+
+    def test_cross_platform_demo_check_scripts_cover_database_tests_and_frontend_build(self):
+        powershell = (ROOT / "scripts/check.ps1").read_text(encoding="utf-8")
+        shell = (ROOT / "scripts/check.sh").read_text(encoding="utf-8")
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        for source in (powershell, shell):
+            self.assertIn("ENCOUNTER_TEST_DATABASE_URL", source)
+            self.assertIn("unittest discover -s tests -v", source)
+            self.assertIn("docker-compose.prod.yml", source)
+            self.assertIn("run build", source)
+        self.assertIn("scripts/check.ps1", makefile)
+        self.assertIn("scripts/check.sh", makefile)
+
     def test_core_services_json_encode_uuid_values(self):
         from backend.app.core import services
 
@@ -165,6 +225,43 @@ class FoundationContractTest(unittest.TestCase):
         with patch.object(services, "_connect", fake_connect):
             services.ensure_task("enc", "COORD_SCHEDULE_CLEAR", "RESOLVE_SCHEDULE_CONFLICT", "FRONT_DESK", None, "coord:enc:schedule-conflict")
         self.assertIn("status = CASE WHEN tasks.status = 'CANCELLED' THEN 'OPEN'", connection.query)
+
+    def test_frontend_has_shared_persistent_language_context(self):
+        context = (ROOT / "frontend/src/demo-context.jsx").read_text(encoding="utf-8")
+        shell = (ROOT / "frontend/src/main.jsx").read_text(encoding="utf-8")
+        feature_files = (
+            "encounter/index.jsx",
+            "documentation-ai/index.jsx",
+            "pre-treatment/index.jsx",
+            "coordination/index.jsx",
+            "post-treatment-chat/index.jsx",
+            "compliance/index.jsx",
+        )
+
+        self.assertIn('localStorage.getItem("careguard.language")', context)
+        self.assertIn('localStorage.setItem("careguard.language"', context)
+        self.assertIn("document.documentElement.lang", context)
+        self.assertIn("setLanguage", context)
+        self.assertIn("lang=${context.language}", context)
+        self.assertIn('<option value="vi">Tiếng Việt</option>', shell)
+        self.assertIn('<option value="en">English</option>', shell)
+        for relative_path in feature_files:
+            source = (ROOT / "frontend/src/features" / relative_path).read_text(encoding="utf-8")
+            self.assertIn("tr", source, relative_path)
+
+    def test_frontend_has_contextual_accessible_help_dialog(self):
+        shell = (ROOT / "frontend/src/main.jsx").read_text(encoding="utf-8")
+        styles = (ROOT / "frontend/src/style.css").read_text(encoding="utf-8")
+
+        self.assertIn("const ROUTE_HELP", shell)
+        for route in ("/encounter", "/documentation-ai", "/pre-treatment", "/coordination", "/post-treatment", "/compliance"):
+            self.assertIn(f'"{route}":', shell)
+        self.assertIn('role="dialog"', shell)
+        self.assertIn('aria-modal="true"', shell)
+        self.assertIn('event.key === "Escape"', shell)
+        self.assertIn("dialogRef.current?.focus()", shell)
+        self.assertIn(".help-launcher", styles)
+        self.assertIn(".help-dialog", styles)
 
 
 if __name__ == "__main__":

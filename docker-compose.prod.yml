@@ -1,0 +1,59 @@
+services:
+  db:
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-careguard}
+      POSTGRES_USER: ${POSTGRES_USER:-careguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    ports: !reset []
+    restart: unless-stopped
+
+  migrate:
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-careguard}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-careguard}
+      MIGRATION_DIR: /migrations
+
+  demo-reset:
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+
+  api:
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql://${POSTGRES_USER:-careguard}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB:-careguard}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost}
+      ENABLE_API_DOCS: ${ENABLE_API_DOCS:-false}
+      DEMO_ACCESS_TOKEN: ${DEMO_ACCESS_TOKEN:?DEMO_ACCESS_TOKEN is required}
+      AI_MODE: ${AI_MODE:-fixture}
+      MODEL_BASE_URL: ${MODEL_BASE_URL:-}
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+      MODEL_NAME: ${MODEL_NAME:-}
+    ports: !reset []
+    restart: unless-stopped
+
+  web:
+    build:
+      context: ./frontend
+      target: production
+    ports: !reset []
+    restart: unless-stopped
+
+  gateway:
+    image: caddy:2-alpine
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN is required}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  caddy_data:
+  caddy_config:

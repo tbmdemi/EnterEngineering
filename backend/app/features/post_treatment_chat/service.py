@@ -1,26 +1,50 @@
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
+from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, field_validator, model_validator
 
 from ...core.contracts import Role
 from ...core.errors import AppError
-from ...core.services import _connect, append_audit
+from ...core.services import _connect, append_audit, require_encounter
 
 
 DEMO_ENCOUNTER_ID = "00000000-0000-0000-0000-000000000003"
+NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class ReleaseRequest(BaseModel):
-    care_instructions: str = Field(min_length=1, max_length=2000)
-    recall_at: datetime
-    monitor_until: datetime
+    model_config = ConfigDict(extra="forbid")
+
+    care_instructions: NonEmptyText = Field(max_length=2000)
+    recall_at: AwareDatetime
+    monitor_until: AwareDatetime
+
+    @field_validator("recall_at", "monitor_until")
+    @classmethod
+    def normalize_datetime(cls, value: datetime) -> datetime:
+        # Canonical UTC values make equivalent offsets semantically idempotent.
+        return value.astimezone(timezone.utc)
+
+    @model_validator(mode="after")
+    def validate_release_window(self):
+        now = datetime.now(timezone.utc)
+        if self.recall_at <= now:
+            raise ValueError("recall_at must be in the future")
+        if self.monitor_until <= now:
+            raise ValueError("monitor_until must be in the future")
+        if self.monitor_until > self.recall_at:
+            raise ValueError("monitor_until must be on or before recall_at")
+        return self
 
 
 class ChatRequest(BaseModel):
-    message: str = Field(min_length=1, max_length=1000)
+    model_config = ConfigDict(extra="forbid")
+
+    message: NonEmptyText = Field(max_length=1000)
+    encounter_id: UUID
 
 
 class ChatResponse(BaseModel):
@@ -43,11 +67,34 @@ def _require(role, allowed):
         raise AppError("ROLE_FORBIDDEN", "Role is not allowed for this action", status_code=403)
 
 
+def _parse_aware_datetime(value):
+    if isinstance(value, datetime):
+        parsed = value
+    elif isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+    else:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc)
+
+
+def _same_release_value(code, existing_value, requested_value):
+    if not isinstance(existing_value, dict):
+        return False
+    if code == "POST_CARE_INSTRUCTIONS":
+        return existing_value.get("text") == requested_value["text"]
+    field = "recall_at" if code == "POST_RECALL" else "monitor_until"
+    existing_at = _parse_aware_datetime(existing_value.get(field))
+    requested_at = _parse_aware_datetime(requested_value[field])
+    return existing_at is not None and existing_at == requested_at
+
+
 def release_encounter(encounter_id, payload, role):
     _require(role, {Role.DENTIST})
-    if encounter_id != DEMO_ENCOUNTER_ID:
-        raise AppError("ENCOUNTER_NOT_FOUND", "Encounter was not found", status_code=404)
-
     items = (
         ("POST_CARE_INSTRUCTIONS", {"text": payload.care_instructions}),
         ("POST_RECALL", {"recall_at": payload.recall_at.isoformat()}),
@@ -57,8 +104,33 @@ def release_encounter(encounter_id, payload, role):
         encounter = connection.execute("SELECT stage FROM encounters WHERE id = %s FOR UPDATE", (encounter_id,)).fetchone()
         if not encounter:
             raise AppError("ENCOUNTER_NOT_FOUND", "Encounter was not found", status_code=404)
-        if encounter["stage"] not in {"POST_TREATMENT", "CLOSED"}:
+        if encounter["stage"] == "CLOSED":
+            raise AppError("ENCOUNTER_CLOSED", "Closed encounters are read-only", {"encounter_id": str(encounter_id)}, 409)
+        if encounter["stage"] != "POST_TREATMENT":
             raise AppError("ENCOUNTER_NOT_RELEASABLE", "Encounter must be post-treatment before release", {"stage": encounter["stage"]}, 409)
+        existing_rows = connection.execute(
+            """SELECT * FROM evidence_items
+               WHERE encounter_id = %s AND code = ANY(%s)
+                 AND state = 'VERIFIED' AND released_to_patient_at IS NOT NULL""",
+            (encounter_id, [code for code, _value in items]),
+        ).fetchall()
+        existing = {row["code"]: dict(row) for row in existing_rows}
+        if all(
+            code in existing and _same_release_value(code, existing[code]["value"], value)
+            for code, value in items
+        ):
+            current_task = connection.execute(
+                "SELECT * FROM tasks WHERE idempotency_key = %s",
+                (f"post-complication:{encounter_id}",),
+            ).fetchone()
+            if current_task and _parse_aware_datetime(current_task["due_at"]) == payload.monitor_until:
+                return {
+                    "encounter_id": encounter_id,
+                    "evidence": [existing[code] for code, _value in items],
+                    "task": dict(current_task),
+                    "released": True,
+                    "idempotent_replay": True,
+                }
         evidence = []
         for code, value in items:
             evidence.append(dict(connection.execute(
@@ -72,7 +144,23 @@ def release_encounter(encounter_id, payload, role):
         task = dict(connection.execute(
             """INSERT INTO tasks (encounter_id, obligation_code, task_type, owner_role, due_at, idempotency_key)
                VALUES (%s, 'POST_COMPLICATION_MONITORING', 'PATIENT_FOLLOW_UP', 'ASSISTANT', %s, %s)
-               ON CONFLICT (idempotency_key) DO UPDATE SET idempotency_key = EXCLUDED.idempotency_key RETURNING *""",
+               ON CONFLICT (idempotency_key) DO UPDATE SET
+                 due_at = EXCLUDED.due_at,
+                 status = CASE
+                   WHEN tasks.due_at IS DISTINCT FROM EXCLUDED.due_at
+                     AND tasks.status IN ('COMPLETED', 'CANCELLED') THEN 'OPEN'
+                   ELSE tasks.status
+                 END,
+                 updated_at = now(),
+                 completed_at = CASE
+                   WHEN tasks.due_at IS DISTINCT FROM EXCLUDED.due_at THEN NULL
+                   ELSE tasks.completed_at
+                 END,
+                 cancelled_at = CASE
+                   WHEN tasks.due_at IS DISTINCT FROM EXCLUDED.due_at THEN NULL
+                   ELSE tasks.cancelled_at
+                 END
+               RETURNING *""",
             (encounter_id, payload.monitor_until, f"post-complication:{encounter_id}"),
         ).fetchone())
         connection.execute(
@@ -80,17 +168,21 @@ def release_encounter(encounter_id, payload, role):
                VALUES (%s, 'POST_TREATMENT_RELEASED', 'encounter', %s, %s, %s::jsonb)""",
             (role.value, encounter_id, encounter_id, json.dumps({"evidence_codes": [code for code, _ in items], "task_id": str(task["id"])})),
         )
-    return {"encounter_id": encounter_id, "evidence": evidence, "task": task, "released": True}
+    return {"encounter_id": encounter_id, "evidence": evidence, "task": task, "released": True, "idempotent_replay": False}
 
 
-def _audit_chat(intent, citations, escalation):
-    append_audit("PATIENT", "PORTAL_CHAT_ANSWERED", "encounter", DEMO_ENCOUNTER_ID, DEMO_ENCOUNTER_ID, {
+def _audit_chat(encounter_id, intent, citations, escalation):
+    append_audit("PATIENT", "PORTAL_CHAT_ANSWERED", "encounter", encounter_id, encounter_id, {
         "intent": intent, "result": "ESCALATED" if escalation else "ANSWERED" if citations else "ABSTAINED", "citation_count": len(citations)
     })
 
 
 def chat(payload, role):
     _require(role, {Role.PATIENT})
+    # Demo identity is intentionally limited to a role header, but every chat
+    # must still reference a real synthetic Encounter before it can read or
+    # append audit data. Target product adds patient/proxy ownership checks.
+    require_encounter(payload.encounter_id)
     message = payload.message.casefold()
     cards = APPROVED_CARDS["cards"]
     emergency = next(card for card in cards if card.get("escalation"))
@@ -100,7 +192,7 @@ def chat(payload, role):
         with _connect() as connection:
             rows = connection.execute(
                 "SELECT code, value FROM evidence_items WHERE encounter_id = %s AND state = 'VERIFIED' AND released_to_patient_at IS NOT NULL ORDER BY code",
-                (DEMO_ENCOUNTER_ID,),
+                (str(payload.encounter_id),),
             ).fetchall()
         if rows:
             parts = [str(row["value"].get("text") or row["value"].get("recall_at") or row["value"].get("monitor_until")) for row in rows]
@@ -114,5 +206,5 @@ def chat(payload, role):
         else:
             card = next((card for card in cards if card["intent"] == "SYMPTOM_INFO" and not card.get("escalation") and any(key in message for key in card["keywords"])), None)
             response = ChatResponse(intent="SYMPTOM_INFO", answer=card["answer"], citations=[_citation(card)]) if card else ChatResponse(intent="SYMPTOM_INFO", answer="Tôi không có thông tin đã duyệt để trả lời câu hỏi này. Hãy liên hệ phòng khám.", citations=[])
-    _audit_chat(response.intent, response.citations, response.escalation)
+    _audit_chat(payload.encounter_id, response.intent, response.citations, response.escalation)
     return response

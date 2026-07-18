@@ -19,6 +19,20 @@ class AppointmentSummary(BaseModel):
     ends_at: datetime
     chair: str
     status: str
+    version: int = Field(default=1, ge=1)
+
+
+class ComplianceBlocker(BaseModel):
+    code: str
+    state: str
+    owner_role: Role
+
+
+class TransitionReadiness(BaseModel):
+    ready: bool
+    target_stage: EncounterStage
+    policy_version: str
+    blockers: list[ComplianceBlocker]
 
 
 class EncounterResponse(BaseModel):
@@ -29,6 +43,7 @@ class EncounterResponse(BaseModel):
     appointment: AppointmentSummary | None
     next_stage: EncounterStage | None
     can_advance: bool
+    readiness: TransitionReadiness | None = None
 
 
 class StageTransitionResponse(BaseModel):
