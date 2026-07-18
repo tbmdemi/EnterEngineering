@@ -2,28 +2,29 @@ import json
 import os
 import re
 import urllib.request
-from typing import Literal, Optional
+from typing import Annotated, Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, StringConstraints, model_validator
 
 from ...core.contracts import Role
 from ...core.errors import AppError
-from ...core.services import _connect, require_encounter
+from ...core.services import _connect
 from ...dependencies import require_demo_role
 
 
 router = APIRouter(tags=["documentation-ai"])
+NonEmptyText = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
 class DocumentationInput(BaseModel):
     encounter_id: UUID
     consent_signed: bool
     treatment_plan_signed: bool
-    progress_note: str = Field(min_length=1)
-    tooth: str = Field(min_length=1)
-    surface: str = Field(min_length=1)
+    progress_note: NonEmptyText
+    tooth: NonEmptyText
+    surface: NonEmptyText
     medication_prescribed: bool = False
     medication_detail: Optional[str] = None
 
@@ -36,7 +37,7 @@ class DocumentationInput(BaseModel):
 
 class ExtractNoteInput(BaseModel):
     encounter_id: UUID
-    note: str = Field(min_length=1)
+    note: NonEmptyText
 
 
 class Fact(BaseModel):
@@ -65,6 +66,17 @@ FACT_EVIDENCE = {
 def _require_role(role: Role, *allowed: Role):
     if role not in allowed:
         raise AppError("ROLE_FORBIDDEN", "Role is not allowed for this action", {"role": role.value}, 403)
+
+
+def _require_mutable_encounter_in(connection, encounter_id: UUID):
+    encounter = connection.execute(
+        "SELECT stage FROM encounters WHERE id = %s FOR UPDATE",
+        (encounter_id,),
+    ).fetchone()
+    if not encounter:
+        raise AppError("ENCOUNTER_NOT_FOUND", "Encounter was not found", {"encounter_id": str(encounter_id)}, 404)
+    if encounter["stage"] == "CLOSED":
+        raise AppError("ENCOUNTER_CLOSED", "Closed encounters are read-only", {"encounter_id": str(encounter_id)}, 409)
 
 
 def _raise_review_error(connection, run_id: UUID):
@@ -101,6 +113,7 @@ def _live_extract(note: str) -> tuple[list[Fact], str]:
 
 def _save_run(encounter_id: UUID, model_name: str, facts: list[Fact]) -> str:
     with _connect() as connection:
+        _require_mutable_encounter_in(connection, encounter_id)
         row = connection.execute(
             "INSERT INTO ai_runs (encounter_id, model_name, status, output) VALUES (%s,%s,'UNVERIFIED',%s::jsonb) RETURNING id",
             (encounter_id, model_name, json.dumps({"facts": [fact.model_dump() for fact in facts]})),
@@ -111,7 +124,6 @@ def _save_run(encounter_id: UUID, model_name: str, facts: list[Fact]) -> str:
 @router.post("/api/v1/documentation")
 def save_documentation(data: DocumentationInput, role: Role = Depends(require_demo_role)):
     _require_role(role, Role.ASSISTANT, Role.DENTIST)
-    require_encounter(data.encounter_id)
     values = {
         "DOC_MEDICATION_PRESCRIBED": {"prescribed": data.medication_prescribed},
         "DOC_PROGRESS_NOTE": {"note": data.progress_note},
@@ -125,6 +137,7 @@ def save_documentation(data: DocumentationInput, role: Role = Depends(require_de
         values["DOC_MEDICATION_DETAILS"] = {"detail": data.medication_detail}
     conditional_codes = ("DOC_CONSENT_SIGNED", "DOC_TREATMENT_PLAN_SIGNED", "DOC_MEDICATION_DETAILS")
     with _connect() as connection:
+        _require_mutable_encounter_in(connection, data.encounter_id)
         for code, value in values.items():
             connection.execute(
                 """INSERT INTO evidence_items (encounter_id, code, state, value, source_type, source_ref, actor_role)
@@ -148,7 +161,6 @@ def save_documentation(data: DocumentationInput, role: Role = Depends(require_de
 @router.post("/api/v1/ai/extract-note", response_model=Extraction)
 def extract_note(data: ExtractNoteInput, role: Role = Depends(require_demo_role)):
     _require_role(role, Role.ASSISTANT, Role.DENTIST)
-    require_encounter(data.encounter_id)
     try:
         facts, model = _live_extract(data.note)
     except Exception:
@@ -167,6 +179,7 @@ def accept_run(run_id: UUID, review: ReviewInput, role: Role = Depends(require_d
         ).fetchone()
         if not run:
             _raise_review_error(connection, run_id)
+        _require_mutable_encounter_in(connection, run["encounter_id"])
         output = run["output"] if isinstance(run["output"], dict) else json.loads(run["output"])
         try:
             fact = Fact.model_validate(output["facts"][0])
@@ -205,6 +218,7 @@ def reject_run(run_id: UUID, role: Role = Depends(require_demo_role)):
         ).fetchone()
         if not run:
             _raise_review_error(connection, run_id)
+        _require_mutable_encounter_in(connection, run["encounter_id"])
         connection.execute(
             "INSERT INTO audit_events (actor_role, action, object_type, object_id, encounter_id, metadata) VALUES (%s,'AI_RUN_REJECTED','ai_run',%s,%s,'{}'::jsonb) RETURNING id",
             (role.value, run_id, run["encounter_id"]),

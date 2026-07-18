@@ -242,15 +242,15 @@ function Encounter() {
             {isAdvancing ? <><span className="encounter-button-spinner" aria-hidden="true" />Đang chuyển bước…</> : <>Tiếp tục <span aria-hidden="true">→</span></>}
           </button>
           : data.next_stage
-            ? <span className="encounter-readonly-badge">Vai trò này chỉ được xem</span>
+            ? <span className="encounter-readonly-badge">{data.readiness && !data.readiness.ready ? "Chưa đủ điều kiện chuyển bước" : "Vai trò này chỉ được chuyển bởi Dentist"}</span>
             : <span className="encounter-complete-badge" role="status"><span aria-hidden="true">✓</span> Ca khám đã hoàn tất</span>}
       </footer>
 
       {data.readiness && !data.readiness.ready && <section className="encounter-alert" role="alert">
         <span aria-hidden="true">!</span>
         <div>
-          <strong>Chưa thể đóng ca</strong>
-          <p>{data.readiness.blockers.length} nghĩa vụ compliance cần được xử lý.</p>
+          <strong>Chưa thể chuyển sang {STAGE_LABELS[data.readiness.target_stage] || data.readiness.target_stage}</strong>
+          <p>{data.readiness.blockers.length} điều kiện bắt buộc cần được xử lý.</p>
           <p>{data.readiness.blockers.map(item => `${item.code} (${item.state})`).join(", ")}</p>
           <a href={`/compliance?id=${encodeURIComponent(encounterId)}&role=${encodeURIComponent(role)}`}>Mở Compliance readiness</a>
         </div>

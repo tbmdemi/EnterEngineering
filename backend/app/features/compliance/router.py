@@ -6,7 +6,7 @@ from ...core.contracts import Role
 from ...core.errors import AppError
 from ...core.services import _connect, require_encounter_in
 from ...dependencies import require_demo_role
-from .evaluator import POLICY_VERSION
+from .evaluator import POLICY_VERSION, active_codes_for_stage
 from .service import blockers, current_assessment, reconcile_assessment
 
 
@@ -29,11 +29,34 @@ def _require_encounter(connection, encounter_id):
     require_encounter_in(connection, encounter_id)
 
 
+def _encounter_stage(connection, encounter_id):
+    row = connection.execute("SELECT stage FROM encounters WHERE id = %s", (encounter_id,)).fetchone()
+    if not row:
+        require_encounter_in(connection, encounter_id)
+    return row["stage"]
+
+
 @router.post("/encounters/{encounter_id}/evaluate")
 def evaluate_encounter(encounter_id: UUID, role=Depends(_require_staff)):
     with _connect() as connection:
-        checks = reconcile_assessment(connection, encounter_id, role)
-    return {"encounter_id": encounter_id, "policy_version": POLICY_VERSION, "checks": checks}
+        stage = _encounter_stage(connection, encounter_id)
+        if stage == "CLOSED":
+            raise AppError("ENCOUNTER_CLOSED", "Closed encounters are read-only", {"encounter_id": str(encounter_id)}, 409)
+        active_codes = active_codes_for_stage(stage)
+        checks = reconcile_assessment(connection, encounter_id, role, active_codes)
+        tasks = connection.execute(
+            """SELECT id, obligation_code, owner_role, status, due_at
+               FROM tasks WHERE encounter_id = %s AND obligation_code = ANY(%s)
+               ORDER BY obligation_code, id""",
+            (encounter_id, list(active_codes)),
+        ).fetchall() if active_codes else []
+    return {
+        "encounter_id": encounter_id,
+        "stage": stage,
+        "policy_version": POLICY_VERSION,
+        "checks": checks,
+        "tasks": [dict(row) for row in tasks],
+    }
 
 
 @router.get("/encounters/{encounter_id}/readiness")

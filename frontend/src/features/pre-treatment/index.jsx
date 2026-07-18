@@ -50,6 +50,8 @@ function PreTreatment() {
   const [imagingReviewed, setImagingReviewed] = useState(false);
   const [acceptedReviews, setAcceptedReviews] = useState({});
   const [rejectedReviews, setRejectedReviews] = useState({});
+  const [procedureChoice, setProcedureChoice] = useState("");
+  const [persistedRequiresImaging, setPersistedRequiresImaging] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -60,6 +62,9 @@ function PreTreatment() {
       if (!response.ok) throw new Error(result.message || "Unable to load checklist");
       setItems(result.items || []);
       setAudit(result.audit || []);
+      const requiresImaging = result.procedure?.requires_imaging;
+      setPersistedRequiresImaging(requiresImaging === true ? true : requiresImaging === false ? false : null);
+      setProcedureChoice(requiresImaging === true ? "required" : requiresImaging === false ? "not-required" : "");
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -159,6 +164,33 @@ function PreTreatment() {
       setImagingReviewed(false);
       setAcceptedReviews({});
       setRejectedReviews({});
+      const requiresImaging = result.procedure?.requires_imaging;
+      setPersistedRequiresImaging(requiresImaging === true ? true : requiresImaging === false ? false : null);
+      setProcedureChoice(requiresImaging === true ? "required" : requiresImaging === false ? "not-required" : "");
+    } catch (caught) {
+      setError(caught.message);
+    } finally {
+      setSaving("");
+    }
+  };
+
+  const saveProcedure = async event => {
+    event.preventDefault();
+    if (!procedureChoice) {
+      setError("Choose whether imaging is required before saving the procedure context.");
+      return;
+    }
+    setSaving("procedure");
+    setError("");
+    try {
+      const response = await fetch(`/api/v1/encounters/${encounterId}/pre-treatment/procedure`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", "X-Demo-Role": role },
+        body: JSON.stringify({ requires_imaging: procedureChoice === "required", performed_at: new Date().toISOString() }),
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.message || "Unable to save procedure context");
+      await load();
     } catch (caught) {
       setError(caught.message);
     } finally {
@@ -178,12 +210,19 @@ function PreTreatment() {
   };
 
   const remaining = items.filter(item => item.applicable && item.evidence?.state !== "VERIFIED").length;
+  const procedureMissing = persistedRequiresImaging === null;
+  const totalRemaining = remaining + (procedureMissing ? 1 : 0);
 
   return <section className="pre-treatment" aria-busy={loading || Boolean(saving)}>
     <a className="skip-link" href="#safety-checklist">Skip to Safety Checklist</a>
-    <header className="safety-header"><div><a href="/" className="back-link">← CareGuard Dental</a><p className="eyebrow">ENCOUNTER <span translate="no">{encounterId.slice(-6)}</span> · PRE-TREATMENT</p><h1>Safety Gate</h1><p>Confirm each required safety check before treatment.</p></div><div className="demo-controls"><label>Acting as<select value={role} onChange={event => setRole(event.target.value)} disabled={Boolean(saving)}><option value="FRONT_DESK">Front Desk</option><option value="ASSISTANT">Assistant</option><option value="DENTIST">Dentist</option><option value="QA">QA</option></select></label><button type="button" className="reset-button" onClick={resetDemo} disabled={role !== "QA" || loading || Boolean(saving)}>{saving === "reset" ? "Starting…" : "Start fresh demo (QA)"}</button><span className={`readiness ${remaining ? "needs-action" : "ready"}`} aria-live="polite"><strong>{remaining ? `${remaining} Required` : "Ready for Review"}</strong><span>{items.length - remaining} of {items.length} checks complete</span></span></div></header>
+    <header className="safety-header"><div><a href="/" className="back-link">← CareGuard Dental</a><p className="eyebrow">ENCOUNTER <span translate="no">{encounterId.slice(-6)}</span> · PRE-TREATMENT</p><h1>Safety Gate</h1><p>Confirm each required safety check before treatment.</p></div><div className="demo-controls"><label>Acting as<select value={role} onChange={event => setRole(event.target.value)} disabled={Boolean(saving)}><option value="FRONT_DESK">Front Desk</option><option value="ASSISTANT">Assistant</option><option value="DENTIST">Dentist</option><option value="QA">QA</option></select></label><button type="button" className="reset-button" onClick={resetDemo} disabled={role !== "QA" || loading || Boolean(saving)}>{saving === "reset" ? "Starting…" : "Start fresh demo (QA)"}</button><span className={`readiness ${totalRemaining ? "needs-action" : "ready"}`} aria-live="polite"><strong>{totalRemaining ? `${totalRemaining} Required` : "Ready for Review"}</strong><span>{items.length - remaining} of {items.length} checks complete</span></span></div></header>
 
     {error && <p className="form-error" role="alert">{error} Try again or reload the page.</p>}
+    {!loading && <form className={`procedure-context ${procedureMissing ? "missing" : "declared"}`} onSubmit={saveProcedure}>
+      <div><p className="eyebrow">PROCEDURE CONTEXT</p><h2>Is imaging required for this procedure?</h2><p>This declaration controls whether the imaging safety check is required or not applicable.</p></div>
+      <label>Imaging requirement<select value={procedureChoice} onChange={event => setProcedureChoice(event.target.value)} disabled={Boolean(saving)}><option value="">Select requirement…</option><option value="required">Imaging required</option><option value="not-required">Imaging not required</option></select></label>
+      <button type="submit" className="confirm-button" disabled={!(["ASSISTANT", "DENTIST"].includes(role)) || Boolean(saving)}>{saving === "procedure" ? "Saving…" : procedureMissing ? "Confirm requirement" : "Update requirement"}</button>
+    </form>}
     {loading ? <p className="loading" aria-live="polite">Loading Safety Checklist…</p> : items.length === 0 ? <div className="empty-state"><h2>No Safety Checks Found</h2><p>Reload the page or verify the encounter configuration.</p><button type="button" className="confirm-button" onClick={load}>Reload Checklist</button></div> : <div className="safety-layout"><section id="safety-checklist" className="checklist" aria-label="Pre-treatment checklist">{items.map(item => {
       const [title, description] = COPY[item.code];
       const verified = item.evidence?.state === "VERIFIED";

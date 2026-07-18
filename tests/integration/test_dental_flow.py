@@ -68,6 +68,13 @@ class DentalFlowIntegrationTest(unittest.TestCase):
 
     def test_full_flow_blocks_then_closes_after_all_modules_produce_evidence(self):
         self.advance("PRE_TREATMENT", 1)
+        premature_treatment = self.client.post(
+            f"/api/v1/encounters/{self.encounter_id}/stage",
+            headers={"X-Demo-Role": "DENTIST"},
+            json={"stage": "TREATMENT", "version": 2},
+        )
+        self.assertEqual(premature_treatment.status_code, 409)
+        self.assertEqual(premature_treatment.json()["code"], "STAGE_REQUIREMENTS_NOT_READY")
         self.request("POST", "/api/v1/documentation", "DENTIST", json={
             "encounter_id": str(self.encounter_id),
             "consent_signed": True,
@@ -80,10 +87,10 @@ class DentalFlowIntegrationTest(unittest.TestCase):
 
         performed_at = datetime.now(timezone.utc).isoformat()
         for code, value in {
-            "PRE_MEDICAL_HISTORY": {"summary": "Reviewed"},
+            "PRE_MEDICAL_HISTORY": {"summary": "Reviewed", "reviewed_source_refs": ["DOC-DEMO-001"]},
             "PRE_ALLERGY": {"status": "NONE_KNOWN"},
             "PRE_VITALS": {"systolic": 120, "diastolic": 80, "pulse": 72},
-            "PRE_STERILIZATION": {"cycle_or_tray_id": "INT-CYCLE"},
+            "PRE_STERILIZATION": {"confirmed": True, "cycle_or_tray_id": "INT-CYCLE"},
         }.items():
             self.request(
                 "PUT", f"/api/v1/encounters/{self.encounter_id}/pre-treatment/{code}",
@@ -116,12 +123,29 @@ class DentalFlowIntegrationTest(unittest.TestCase):
         self.assertEqual(blocked.json()["code"], "COMPLIANCE_NOT_READY")
 
         now = datetime.now(timezone.utc)
-        self.request("POST", f"/api/v1/encounters/{self.encounter_id}/release", "DENTIST", json={
+        release_payload = {
             "care_instructions": "Keep the area clean.",
             "recall_at": (now + timedelta(days=30)).isoformat(),
             "monitor_until": (now + timedelta(days=7)).isoformat(),
-        })
+        }
+        first_release = self.request("POST", f"/api/v1/encounters/{self.encounter_id}/release", "DENTIST", json=release_payload)
+        replay = self.request("POST", f"/api/v1/encounters/{self.encounter_id}/release", "DENTIST", json=release_payload)
+        self.assertFalse(first_release["idempotent_replay"])
+        self.assertTrue(replay["idempotent_replay"])
         readiness = self.request("GET", f"/api/v1/encounters/{self.encounter_id}/readiness", "QA")
         self.assertTrue(readiness["ready_to_close"])
         closed = self.advance("CLOSED", 4)
         self.assertEqual((closed["stage"], closed["version"]), ("CLOSED", 5))
+        self.assertEqual(closed["appointment"]["status"], "FULFILLED")
+
+        immutable = self.client.post(
+            f"/api/v1/encounters/{self.encounter_id}/release",
+            headers={"X-Demo-Role": "DENTIST"},
+            json={
+                "care_instructions": "Changed after close.",
+                "recall_at": (now + timedelta(days=60)).isoformat(),
+                "monitor_until": (now + timedelta(days=14)).isoformat(),
+            },
+        )
+        self.assertEqual(immutable.status_code, 409)
+        self.assertEqual(immutable.json()["code"], "ENCOUNTER_CLOSED")

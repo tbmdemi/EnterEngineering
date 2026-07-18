@@ -14,7 +14,7 @@ CONTEXT_QUERY = """
       ) AS patient,
       CASE WHEN a.id IS NULL THEN NULL ELSE jsonb_build_object(
         'id', a.id, 'starts_at', a.starts_at, 'ends_at', a.ends_at,
-        'chair', a.chair, 'status', a.status
+        'chair', a.chair, 'status', a.status, 'version', a.version
       ) END AS appointment
     FROM encounters e
     JOIN patients p ON p.id = e.patient_id
@@ -33,6 +33,28 @@ def _context(connection, encounter_id):
 def get_encounter(encounter_id):
     with _connect() as connection:
         return _context(connection, encounter_id)
+
+
+def check_in_transition_guard(connection, encounter_id, _actor_role):
+    appointment = connection.execute(
+        """SELECT a.id, a.status
+           FROM encounters e
+           JOIN appointments a ON a.id = e.appointment_id
+           WHERE e.id = %s
+           FOR UPDATE OF a""",
+        (encounter_id,),
+    ).fetchone()
+    if appointment and appointment["status"] == "CHECKED_IN":
+        return None
+    return {
+        "code": "APPOINTMENT_NOT_CHECKED_IN",
+        "message": "Encounter requires a checked-in appointment before pre-treatment",
+        "details": {
+            "encounter_id": str(encounter_id),
+            "appointment_status": appointment["status"] if appointment else None,
+        },
+        "status_code": 409,
+    }
 
 
 def advance_stage(encounter_id, stage, version, actor_role, transition_guard=None):
@@ -92,6 +114,21 @@ def _perform_stage_update(connection, encounter_id, target, version, actor_role,
             },
             409,
         )
+    if target == EncounterStage.CLOSED:
+        fulfilled = connection.execute(
+            """UPDATE appointments a SET status = 'FULFILLED', version = a.version + 1
+               FROM encounters e
+               WHERE e.id = %s AND a.id = e.appointment_id AND a.status = 'CHECKED_IN'
+               RETURNING a.id""",
+            (encounter_id,),
+        ).fetchone()
+        if not fulfilled:
+            raise AppError(
+                "APPOINTMENT_NOT_FULFILLABLE",
+                "Checked-in appointment is required to close the encounter",
+                {"encounter_id": str(encounter_id)},
+                409,
+            )
     connection.execute(
         """
         INSERT INTO audit_events

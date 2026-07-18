@@ -14,6 +14,13 @@ const TASK_LABELS = {
   REVIEW_SCHEDULE_CONFLICT: "Schedule conflict review",
 };
 
+const SCHEDULE_RESOLUTION_REASONS = [
+  ["DUPLICATE_BOOKING", "Duplicate booking"],
+  ["PATIENT_REQUESTED_CANCELLATION", "Patient requested cancellation"],
+  ["REBOOKED_TO_ANOTHER_SLOT", "Rebooked to another slot"],
+  ["CREATED_IN_ERROR", "Created in error"],
+];
+
 const formatDateTime = value => value
   ? new Intl.DateTimeFormat("vi-VN", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value))
   : null;
@@ -31,6 +38,7 @@ function Coordination() {
   const [loading, setLoading] = useState(true);
   const [pendingAction, setPendingAction] = useState("");
   const [scheduleResult, setScheduleResult] = useState(null);
+  const [resolutionReasons, setResolutionReasons] = useState({});
 
   const load = useCallback(async signal => {
     if (!ROLES.some(item => item.value === role)) {
@@ -58,6 +66,7 @@ function Coordination() {
   useEffect(() => {
     const controller = new AbortController();
     setScheduleResult(null);
+    setResolutionReasons({});
     load(controller.signal);
     return () => controller.abort();
   }, [load]);
@@ -97,14 +106,24 @@ function Coordination() {
     }
   };
 
-  const resolveSchedule = async appointmentId => {
+  const resolveSchedule = async conflict => {
+    const appointmentId = conflict.conflicts_with;
+    const reason = resolutionReasons[appointmentId];
+    if (!reason) {
+      setMessage("Select an operational reason before resolving the conflict.");
+      return;
+    }
     setPendingAction(`resolve:${appointmentId}`);
     setMessage("");
     try {
       const response = await fetch(`/api/v1/encounters/${encounterId}/coordination/resolve-schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Demo-Role": role },
-        body: JSON.stringify({ appointment_id: appointmentId }),
+        body: JSON.stringify({
+          appointment_id: appointmentId,
+          expected_status: conflict.appointment_status,
+          reason,
+        }),
       });
       setScheduleResult(await parseResponse(response, "Không xử lý được xung đột lịch"));
       await load();
@@ -201,9 +220,30 @@ function Coordination() {
       {!scheduleResult.schedule_clear && <ul>{scheduleResult.conflicts.map(conflict => <li key={conflict.conflicts_with}>
         <strong>{conflict.chair}</strong>
         <span>{formatDateTime(conflict.starts_at)} – {formatDateTime(conflict.ends_at)}</span>
-        {role === "FRONT_DESK" && <button type="button" disabled={Boolean(pendingAction)} onClick={() => resolveSchedule(conflict.conflicts_with)}>
-          {pendingAction === `resolve:${conflict.conflicts_with}` ? "Đang xử lý..." : "Resolve conflict"}
-        </button>}
+        {role === "FRONT_DESK" && <div className="coordination__resolution">
+          <label>
+            <span className="sr-only">Resolution reason</span>
+            <select
+              value={resolutionReasons[conflict.conflicts_with] || ""}
+              onChange={event => setResolutionReasons(current => ({
+                ...current,
+                [conflict.conflicts_with]: event.target.value,
+              }))}
+              disabled={Boolean(pendingAction)}
+              aria-label="Resolution reason"
+            >
+              <option value="">Select reason</option>
+              {SCHEDULE_RESOLUTION_REASONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </select>
+          </label>
+          <button
+            type="button"
+            disabled={Boolean(pendingAction) || !resolutionReasons[conflict.conflicts_with]}
+            onClick={() => resolveSchedule(conflict)}
+          >
+            {pendingAction === `resolve:${conflict.conflicts_with}` ? "Đang xử lý..." : "Resolve conflict"}
+          </button>
+        </div>}
       </li>)}</ul>}
     </section>}
   </section>;

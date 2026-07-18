@@ -213,7 +213,17 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml logs migrate
 
 `Exited (0)` nghĩa là migration thành công. Exit code khác `0` nghĩa là phải đọc log trước khi tiếp tục; code `2` của `psql` thường là lỗi kết nối, còn lỗi SQL sẽ chỉ rõ file và dòng gây lỗi.
 
-### Reset toàn bộ dữ liệu demo
+### Reset riêng năm scenario synthetic
+
+Sau khi đã chuyển stage, đóng ca hoặc hủy lịch trong lúc demo, dùng tool có scope hẹp dưới đây để đưa đúng năm scenario ở bảng bên dưới về trạng thái ban đầu. Lệnh không xóa volume và không đụng dữ liệu khác:
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.dev.yml --profile tools run --rm demo-reset
+```
+
+Tool xóa dữ liệu phụ thuộc của năm Encounter cố định rồi seed lại bằng migration `002`; chạy lặp lại vẫn cho cùng kết quả.
+
+### Reset toàn bộ database local
 
 Lệnh dưới đây xóa vĩnh viễn database volume local và tạo lại seed từ đầu:
 
@@ -224,7 +234,23 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
 
 Chỉ dùng `down -v` khi thực sự muốn mất toàn bộ dữ liệu local. Không dùng lệnh này như cách sửa lỗi migration thường ngày.
 
-Khi bổ sung dữ liệu demo, nên tạo nhiều scenario synthetic rõ ràng: Encounter mới, thiếu pre-treatment evidence, đang treatment, bị chặn close, đủ điều kiện close và có coordination conflict. Automated test vẫn là nơi kiểm tra authorization, transaction, idempotency và concurrency.
+Database hiện có năm scenario synthetic ổn định để test UI mà không phải tự sửa cùng một Encounter:
+
+| Scenario | Encounter ID | Kỳ vọng |
+|---|---|---|
+| Check-in trống | `30000000-0000-0000-0000-000000000001` | Có thể vào Pre-treatment vì appointment đã check-in |
+| Pre-treatment chưa đủ | `30000000-0000-0000-0000-000000000002` | Bị chặn trước Treatment |
+| Đang Treatment | `30000000-0000-0000-0000-000000000003` | Pre-treatment đã đạt; còn thiếu documentation để sang Post-treatment |
+| Post-treatment bị chặn | `30000000-0000-0000-0000-000000000004` | Full close gate chỉ còn thiếu `POST_RECALL` |
+| Post-treatment sẵn sàng | `30000000-0000-0000-0000-000000000005` | `ready_to_close=true` |
+
+Mở một scenario bằng cách thay Encounter ID trên thanh context hoặc dùng URL, ví dụ:
+
+```text
+http://localhost:5173/encounter?id=30000000-0000-0000-0000-000000000002&role=DENTIST
+```
+
+Các scenario được tạo bởi `db/migrations/002_demo_scenarios.sql`, idempotent và chỉ chứa dữ liệu synthetic. Dùng `demo-reset` ở trên khi muốn chạy lại từ đầu trên volume hiện tại. Automated test vẫn là nơi kiểm tra authorization, transaction, idempotency và concurrency.
 
 ## 7. Luồng demo tích hợp
 
@@ -236,18 +262,30 @@ CHECK_IN → PRE_TREATMENT → TREATMENT → POST_TREATMENT → CLOSED
 
 Role demo:
 
-- `FRONT_DESK`, `ASSISTANT`, `DENTIST`: có thể chuyển stage Encounter.
+- `FRONT_DESK`, `ASSISTANT`, `DENTIST`: có thể đưa appointment đã check-in vào `PRE_TREATMENT`.
+- Chỉ `DENTIST` được bắt đầu `TREATMENT`, kết thúc treatment và đóng Encounter.
 - `QA`: đọc/đánh giá compliance nhưng không chuyển stage.
 - `PATIENT`: chỉ truy cập dữ liệu đã được release cho bệnh nhân.
+
+Backend áp dụng gate theo từng transition:
+
+| Transition | Điều kiện |
+|---|---|
+| `CHECK_IN → PRE_TREATMENT` | Có appointment ở `CHECKED_IN` |
+| `PRE_TREATMENT → TREATMENT` | Consent, treatment plan, khai báo `requires_imaging` và toàn bộ safety evidence applicable hợp lệ |
+| `TREATMENT → POST_TREATMENT` | Documentation bắt buộc đã verified và có value hợp lệ |
+| `POST_TREATMENT → CLOSED` | Full `dental-policy.v1` readiness |
+
+Nhãn `VERIFIED` một mình không đủ: evaluator còn kiểm tra các field bắt buộc. Sau `CLOSED`, clinical content, stage, release và coordination write mới bị khóa; riêng task follow-up đã được tạo khi release vẫn có thể được acknowledge/complete để không làm kẹt chăm sóc sau khám. Appointment liên kết được chuyển atomically sang `FULFILLED`.
 
 Encounter ID và role được giữ trong URL/session khi chuyển module. Luồng trình diễn đề xuất sau khi reset:
 
 1. Mở Encounter bằng `DENTIST`, chuyển `CHECK_IN → PRE_TREATMENT`.
 2. Sang Documentation AI, nhập documentation và để dentist xác nhận AI extraction.
-3. Sang Pre-treatment, hoàn tất safety checklist bằng `ASSISTANT` hoặc `DENTIST`.
-4. Sang Coordination, xử lý handoff, referral và schedule conflict theo đúng owner role.
+3. Sang Pre-treatment, khai báo procedure có cần imaging hay không rồi hoàn tất safety checklist bằng `ASSISTANT` hoặc `DENTIST`. Medical history cần source reference; sterilization cần xác nhận và cycle/tray ID.
+4. Sang Coordination, xử lý handoff, referral và schedule conflict theo đúng owner role. Resolve conflict yêu cầu status snapshot và reason code an toàn, không chứa PHI.
 5. Trở lại Encounter và chuyển tới `POST_TREATMENT`.
-6. Sang Post-treatment, release care instruction/recall/monitoring; đổi sang `PATIENT` để thử chat.
+6. Sang Post-treatment, release care instruction/recall/monitoring; `monitor_until` và `recall_at` phải có timezone, ở tương lai và `monitor_until <= recall_at`. Đổi sang `PATIENT` để thử chat.
 7. Sang Compliance bằng `QA` hoặc `DENTIST`, chạy Evaluate và Readiness.
 8. Khi `ready_to_close=true`, trở lại Encounter, xác nhận chuyển sang `CLOSED`.
 
@@ -305,16 +343,16 @@ npm.cmd run build
 Set-Location ..
 ```
 
-Chạy PostgreSQL concurrency test và full-flow integration test:
+Chạy toàn bộ test, bao gồm PostgreSQL concurrency, migration hardening và full-flow integration:
 
 ```powershell
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db migrate
 $env:ENCOUNTER_TEST_DATABASE_URL = "postgresql://careguard:careguard@localhost:5432/careguard?connect_timeout=5"
-.\.venv\Scripts\python.exe -m unittest tests.encounter.test_postgres_concurrency tests.integration.test_dental_flow -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
 Remove-Item Env:ENCOUNTER_TEST_DATABASE_URL
 ```
 
-Các integration test tạo fixture riêng và tự dọn dữ liệu. Khi không đặt `ENCOUNTER_TEST_DATABASE_URL`, chúng được skip để unit test không bắt buộc Docker.
+Các integration test tạo fixture riêng và tự dọn dữ liệu. Chúng kiểm tra concurrent stage update, stage-specific safety gate, full close gate, appointment chuyển `FULFILLED` và tính bất biến sau `CLOSED`. Khi không đặt `ENCOUNTER_TEST_DATABASE_URL`, chúng được skip để unit test không bắt buộc Docker.
 
 ### Linux/macOS
 
@@ -340,7 +378,7 @@ Chạy test cần PostgreSQL:
 ```sh
 docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d db migrate
 ENCOUNTER_TEST_DATABASE_URL='postgresql://careguard:careguard@localhost:5432/careguard?connect_timeout=5' \
-  .venv/bin/python -m unittest tests.encounter.test_postgres_concurrency tests.integration.test_dental_flow -v
+  .venv/bin/python -m unittest discover -s tests -v
 ```
 
 `Makefile` hiện là shortcut tùy chọn cho Linux/macOS và dùng base Compose. Khi phát triển hằng ngày hoặc làm việc trên Windows, ưu tiên các lệnh Compose có cả `docker-compose.dev.yml` ở trên.
@@ -362,11 +400,11 @@ Checklist khuyến nghị cho mỗi thay đổi:
 
 1. Đọc `architecture.md`, `database.md`, `design.md` và module spec liên quan.
 2. Xác định owner, role được phép, state transition, transaction và idempotency boundary.
-3. Giữ API error contract chung; không hard-code role hoặc Encounter ID trong feature.
+3. Giữ API error contract chung; không hard-code role hoặc Encounter ID trong feature. POST retry phải dùng optimistic version, client/server idempotency key hoặc semantic idempotency được test rõ.
 4. Nếu cần schema, chuẩn bị SQL idempotent theo branch ownership; integrator đưa thay đổi dùng chung vào migration. Không tạo database service riêng.
-5. Backend feature nằm trong namespace của feature; thay đổi shared core/router registry cần integrator duyệt.
+5. Backend feature nằm trong namespace của feature; validate content ở server, không chỉ tin UI hoặc cờ `VERIFIED`. Thay đổi shared core/router registry cần integrator duyệt.
 6. Frontend export route theo contract hiện tại và giữ Encounter context qua URL/session.
-7. Bổ sung test cho happy path, authorization, validation, stale state và failure path phù hợp.
+7. Bổ sung test cho happy path, authorization, validation, stale state, retry và failure path. Mutation mới phải chứng minh bị chặn khi Encounter đã `CLOSED` hoặc đi qua amendment contract riêng.
 8. Chạy unit test, integration test liên quan, frontend build và Compose config check.
 9. Cập nhật module spec/handoff và README nếu cách chạy hoặc dependency thay đổi.
 

@@ -66,6 +66,14 @@ class EncounterTest(unittest.TestCase):
         self.assertIn("JOIN patients", connection.calls[0][0])
         self.assertIn("LEFT JOIN appointments", connection.calls[0][0])
 
+    def test_pre_treatment_requires_a_checked_in_appointment(self):
+        for appointment, expected in (({"status": "CHECKED_IN"}, None), ({"status": "BOOKED"}, "APPOINTMENT_NOT_CHECKED_IN"), (None, "APPOINTMENT_NOT_CHECKED_IN")):
+            connection, _connect = self.connection([appointment])
+            with self.subTest(appointment=appointment):
+                result = service.check_in_transition_guard(connection, CONTEXT["id"], Role.FRONT_DESK)
+                self.assertEqual(result["code"] if result else None, expected)
+                self.assertIn("FOR UPDATE OF a", connection.calls[0][0])
+
     def test_next_stage_updates_with_optimistic_version_and_keeps_context(self):
         updated = {**CONTEXT, "stage": "PRE_TREATMENT", "version": 2}
         connection, connect = self.connection([CONTEXT, {"id": CONTEXT["id"]}, updated])
@@ -147,7 +155,35 @@ class EncounterTest(unittest.TestCase):
         for role in (Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST):
             with self.subTest(role=role), patch.object(encounter_router, "advance_stage", return_value=CONTEXT) as advance:
                 encounter_router.change_stage(CONTEXT["id"], change, role)
-            advance.assert_called_once_with(CONTEXT["id"], change.stage, change.version, role)
+            advance.assert_called_once_with(
+                CONTEXT["id"], change.stage, change.version, role,
+                encounter_router.check_in_transition_guard,
+            )
+
+    def test_only_dentist_can_start_or_finish_clinical_treatment(self):
+        for stage, guard in (
+            ("TREATMENT", encounter_router.treatment_transition_guard),
+            ("POST_TREATMENT", encounter_router.post_treatment_transition_guard),
+            ("CLOSED", encounter_router.close_transition_guard),
+        ):
+            change = StageChange(stage=stage, version=2)
+            for role in (Role.FRONT_DESK, Role.ASSISTANT):
+                with self.subTest(stage=stage, role=role), patch.object(encounter_router, "advance_stage") as advance, self.assertRaises(AppError) as caught:
+                    encounter_router.change_stage(CONTEXT["id"], change, role)
+                self.assertEqual(caught.exception.payload["code"], "ROLE_FORBIDDEN")
+                advance.assert_not_called()
+            with self.subTest(stage=stage, role=Role.DENTIST), patch.object(encounter_router, "advance_stage", return_value={**CONTEXT, "stage": stage}) as advance, patch.object(encounter_router, "transition_readiness", return_value={"ready": True, "target_stage": "POST_TREATMENT", "policy_version": "dental-policy.v1", "blockers": []}):
+                encounter_router.change_stage(CONTEXT["id"], change, Role.DENTIST)
+            advance.assert_called_once_with(CONTEXT["id"], change.stage, change.version, Role.DENTIST, guard)
+
+    def test_stage_endpoint_rejects_a_valid_enum_that_is_not_a_forward_target(self):
+        change = StageChange(stage="CHECK_IN", version=1)
+        with patch.object(encounter_router, "advance_stage") as advance, self.assertRaises(AppError) as caught:
+            encounter_router.change_stage(CONTEXT["id"], change, Role.DENTIST)
+
+        self.assertEqual(caught.exception.status_code, 409)
+        self.assertEqual(caught.exception.payload["code"], "INVALID_STAGE_TRANSITION")
+        advance.assert_not_called()
 
     def test_stage_change_requires_a_positive_version(self):
         for version in (0, -1):

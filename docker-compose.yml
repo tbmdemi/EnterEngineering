@@ -28,6 +28,19 @@ services:
         condition: service_healthy
     command: ["sh", "-c", "for file in /migrations/*.sql; do echo Applying $$file; psql -v ON_ERROR_STOP=1 -h db -U careguard -d careguard -f $$file; done"]
     restart: "no"
+  demo-reset:
+    profiles: ["tools"]
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: careguard
+    volumes:
+      - ./db/demo:/demo:ro
+      - ./db/migrations:/migrations:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["sh", "-c", "psql -v ON_ERROR_STOP=1 -h db -U careguard -d careguard -f /demo/reset_scenarios.sql && psql -v ON_ERROR_STOP=1 -h db -U careguard -d careguard -f /migrations/002_demo_scenarios.sql"]
+    restart: "no"
   api:
     build: ./backend
     environment:

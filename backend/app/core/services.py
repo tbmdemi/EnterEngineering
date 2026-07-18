@@ -69,7 +69,11 @@ def ensure_task_in(connection, encounter_id, obligation_code, task_type, owner_r
           (encounter_id, obligation_code, task_type, owner_role, due_at, idempotency_key)
         VALUES (%s, %s, %s, %s, %s, %s)
         ON CONFLICT (idempotency_key) DO UPDATE SET
-          status = CASE WHEN tasks.status = 'CANCELLED' THEN 'OPEN' ELSE tasks.status END
+          status = CASE WHEN tasks.status = 'CANCELLED' THEN 'OPEN' ELSE tasks.status END,
+          due_at = COALESCE(EXCLUDED.due_at, tasks.due_at),
+          updated_at = now(),
+          cancelled_at = CASE WHEN tasks.status = 'CANCELLED' THEN NULL ELSE tasks.cancelled_at END,
+          completed_at = CASE WHEN tasks.status = 'CANCELLED' THEN NULL ELSE tasks.completed_at END
         RETURNING *
     """
     return dict(connection.execute(query, (encounter_id, obligation_code, task_type, owner_role, due_at, idempotency_key)).fetchone())

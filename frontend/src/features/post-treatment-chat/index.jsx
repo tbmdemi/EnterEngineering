@@ -18,6 +18,17 @@ function PostTreatmentChat() {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const isPatient = role === "PATIENT";
+  const earliestDateTime = localDateTime(0);
+  const releaseContract = useMemo(() => {
+    const now = Date.now();
+    const recallAt = Date.parse(recall);
+    const monitorUntil = Date.parse(monitor);
+    const careReady = care.trim().length > 0;
+    const monitorReady = Number.isFinite(monitorUntil) && monitorUntil > now;
+    const recallReady = Number.isFinite(recallAt) && recallAt > now;
+    const ordered = monitorReady && recallReady && monitorUntil <= recallAt;
+    return { careReady, monitorReady, recallReady, ordered, ready: careReady && ordered };
+  }, [care, monitor, recall]);
 
   const request = async (url, body) => {
     setPending(true);
@@ -46,18 +57,22 @@ function PostTreatmentChat() {
 
   const release = event => {
     event.preventDefault();
+    if (!releaseContract.ready) {
+      setError("Hướng dẫn không được để trống; thời gian theo dõi phải ở tương lai và không sau lịch tái khám.");
+      return;
+    }
     return request(`/api/v1/encounters/${encounterId}/release`, {
-      care_instructions: care,
+      care_instructions: care.trim(),
       recall_at: new Date(recall).toISOString(),
       monitor_until: new Date(monitor).toISOString(),
     });
   };
 
   const releaseItems = useMemo(() => [
-    ["Care instruction", care ? "Ready" : "Missing"],
-    ["Recall date", recall ? "Ready" : "Missing"],
-    ["Monitoring window", monitor ? "Ready" : "Missing"],
-  ], [care, monitor, recall]);
+    ["Care instruction", releaseContract.careReady ? "Ready" : "Missing"],
+    ["Recall date", releaseContract.recallReady && releaseContract.ordered ? "Ready" : "Invalid"],
+    ["Monitoring window", releaseContract.monitorReady && releaseContract.ordered ? "Ready" : "Invalid"],
+  ], [releaseContract]);
 
   return <section className="post-page" aria-labelledby="post-title">
     <header className="post-hero">
@@ -80,18 +95,19 @@ function PostTreatmentChat() {
         <div className="post-card-heading"><div><span>Release package</span><h2>Patient care summary</h2></div><small>DENTIST only</small></div>
         <label><span>Care instructions</span><textarea value={care} onChange={event => setCare(event.target.value)} required /></label>
         <div className="post-date-grid">
-          <label><span>Recall appointment</span><input type="datetime-local" value={recall} onChange={event => setRecall(event.target.value)} required /></label>
-          <label><span>Monitor until</span><input type="datetime-local" value={monitor} onChange={event => setMonitor(event.target.value)} required /></label>
+          <label><span>Recall appointment</span><input type="datetime-local" value={recall} min={monitor || earliestDateTime} onChange={event => setRecall(event.target.value)} required /></label>
+          <label><span>Monitor until</span><input type="datetime-local" value={monitor} min={earliestDateTime} max={recall || undefined} onChange={event => setMonitor(event.target.value)} required /></label>
         </div>
+        <small>Thời gian theo dõi phải ở tương lai và kết thúc trước hoặc đúng lịch tái khám.</small>
         <div className="release-warning"><span aria-hidden="true">!</span><p><strong>Release boundary</strong>Chỉ VERIFIED evidence được đánh dấu released. Draft và staff-only note không xuất hiện ở patient portal.</p></div>
-        <button type="submit" disabled={pending || role !== "DENTIST"}>{pending ? "Đang phát hành…" : "Release to patient →"}</button>
+        <button type="submit" disabled={pending || role !== "DENTIST" || !releaseContract.ready}>{pending ? "Đang phát hành…" : "Release to patient →"}</button>
         {role !== "DENTIST" && <small>Chọn role DENTIST để phát hành.</small>}
       </form>
 
       <aside className="post-card release-readiness">
         <div className="post-card-heading"><div><span>Pre-flight check</span><h2>Release readiness</h2></div><small>Encounter #{encounterId.slice(-6)}</small></div>
         <ul>{releaseItems.map(([label, state], index) => <li key={label}><i>{index + 1}</i><span><strong>{label}</strong><small>POST_{label.toUpperCase().replaceAll(" ", "_")}</small></span><b className={state === "Ready" ? "is-ready" : ""}>{state}</b></li>)}</ul>
-        <div className="post-stage-note"><span>Required stage</span><strong>POST_TREATMENT or CLOSED</strong><p>Nếu release bị chặn, quay lại Encounter và chuyển đúng stage trước.</p></div>
+        <div className="post-stage-note"><span>Required stage</span><strong>POST_TREATMENT only</strong><p>CLOSED là bất biến; hãy phát hành trước khi đóng encounter.</p></div>
       </aside>
     </div> : <div className="patient-chat-layout">
       <aside className="patient-portal-card">

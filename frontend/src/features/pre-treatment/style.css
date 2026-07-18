@@ -121,6 +121,31 @@
   color: #b42318;
 }
 
+.pre-treatment .procedure-context {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 18rem) auto;
+  align-items: end;
+  gap: 1rem;
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid #bfd3ea;
+  border-radius: 0.5rem;
+  background: #f7fbff;
+}
+
+.pre-treatment .procedure-context.missing {
+  border-color: #fdba74;
+  background: #fff7ed;
+}
+
+.pre-treatment .procedure-context .eyebrow { margin: 0 0 0.25rem; }
+.pre-treatment .procedure-context h2 { margin: 0; font-size: 1rem; }
+.pre-treatment .procedure-context p:not(.eyebrow) { margin: 0.35rem 0 0; color: #60708a; font-size: 0.85rem; }
+
+@media (max-width: 760px) {
+  .pre-treatment .procedure-context { grid-template-columns: 1fr; align-items: stretch; }
+}
+
 .pre-treatment .loading { padding: 3rem 0; color: #60708a; }
 .pre-treatment .safety-layout {
   display: grid;

@@ -52,7 +52,8 @@ function Component() {
     counts[item.state] = (counts[item.state] || 0) + 1;
     return counts;
   }, {}), [checks]);
-  const ready = result?.ready_to_close ?? (checks.length > 0 && checks.every(item => ["SATISFIED", "NOT_APPLICABLE"].includes(item.state)));
+  const ready = result?.ready_to_close ?? (Boolean(result) && checks.every(item => ["SATISFIED", "NOT_APPLICABLE"].includes(item.state)));
+  const isCloseReadiness = view === "readiness";
   const isStaff = ["FRONT_DESK", "ASSISTANT", "DENTIST", "QA"].includes(role);
   const isAuditor = ["DENTIST", "QA"].includes(role);
 
@@ -82,7 +83,7 @@ function Component() {
       {(view === "evaluate" || view === "readiness") && <>
         <section className={`readiness-banner ${ready ? "is-ready" : "is-blocked"}`}>
           <div className="readiness-icon" aria-hidden="true">{ready ? "✓" : "!"}</div>
-          <div><span>Close gate</span><h2>{ready ? "Encounter is ready to close" : "Encounter has blocking obligations"}</h2><p>{ready ? "Mọi obligation đều Satisfied hoặc Not applicable." : `${result.blockers?.length ?? checks.filter(item => !["SATISFIED", "NOT_APPLICABLE"].includes(item.state)).length} items cần được xử lý trước CLOSED.`}</p></div>
+          <div><span>{isCloseReadiness ? "Close gate" : `Active scope · ${result.stage || "current stage"}`}</span><h2>{ready ? (isCloseReadiness ? "Encounter is ready to close" : "Current-stage obligations are ready") : (isCloseReadiness ? "Encounter has blocking obligations" : "Current stage still has required work")}</h2><p>{ready ? "Mọi obligation trong scope đều Satisfied hoặc Not applicable." : `${result.blockers?.length ?? checks.filter(item => !["SATISFIED", "NOT_APPLICABLE"].includes(item.state)).length} items cần được xử lý trong scope này.`}</p></div>
           <a href={routeHref("/encounter")}>{ready ? "Return to Encounter →" : "View Encounter"}</a>
         </section>
         <section className="compliance-summary">
