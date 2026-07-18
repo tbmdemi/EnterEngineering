@@ -5,11 +5,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from pydantic import ValidationError
+from fastapi.testclient import TestClient
 
 from backend.app.core.errors import AppError
 from backend.app.core.contracts import Role
 from backend.app.features.encounter import service
 from backend.app.features.encounter.router import StageChange
+from backend.app.main import app
 
 encounter_router = importlib.import_module("backend.app.features.encounter.router")
 ROOT = Path(__file__).parents[2]
@@ -19,8 +21,8 @@ CONTEXT = {
     "id": "00000000-0000-0000-0000-000000000003",
     "stage": "CHECK_IN",
     "version": 1,
-    "patient": {"id": "patient-1", "mrn": "DENTAL-001", "full_name": "Nguyen Minh Anh", "date_of_birth": "1992-04-12"},
-    "appointment": {"id": "appointment-1", "starts_at": "2026-07-17T02:00:00+00:00", "ends_at": "2026-07-17T02:45:00+00:00", "chair": "CHAIR-01", "status": "CHECKED_IN"},
+    "patient": {"id": "00000000-0000-0000-0000-000000000001", "mrn": "DENTAL-001", "full_name": "Nguyen Minh Anh", "date_of_birth": "1992-04-12"},
+    "appointment": {"id": "00000000-0000-0000-0000-000000000002", "starts_at": "2026-07-17T02:00:00+00:00", "ends_at": "2026-07-17T02:45:00+00:00", "chair": "CHAIR-01", "status": "CHECKED_IN"},
 }
 
 
@@ -34,6 +36,9 @@ class FakeConnection:
         return self
 
     def fetchone(self):
+        return next(self.rows)
+
+    def fetchall(self):
         return next(self.rows)
 
 
@@ -60,7 +65,7 @@ class EncounterTest(unittest.TestCase):
         updated = {**CONTEXT, "stage": "PRE_TREATMENT", "version": 2}
         connection, connect = self.connection([CONTEXT, {"id": CONTEXT["id"]}, updated])
         with patch.object(service, "_connect", connect):
-            result = service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 1)
+            result = service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 1, Role.DENTIST)
 
         self.assertEqual(result, updated)
         update_query, update_params = connection.calls[1]
@@ -72,12 +77,12 @@ class EncounterTest(unittest.TestCase):
         for target in ("TREATMENT", "CHECK_IN"):
             _connection, connect = self.connection([CONTEXT])
             with self.subTest(target=target), patch.object(service, "_connect", connect), self.assertRaises(AppError) as caught:
-                service.advance_stage(CONTEXT["id"], target, 1)
+                service.advance_stage(CONTEXT["id"], target, 1, Role.DENTIST)
             self.assertEqual(caught.exception.payload["code"], "INVALID_STAGE_TRANSITION")
 
         _connection, connect = self.connection([CONTEXT, None])
         with patch.object(service, "_connect", connect), self.assertRaises(AppError) as caught:
-            service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 0)
+            service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 0, Role.DENTIST)
         self.assertEqual(caught.exception.status_code, 409)
         self.assertEqual(caught.exception.payload["code"], "STALE_ENCOUNTER_VERSION")
 
@@ -85,7 +90,7 @@ class EncounterTest(unittest.TestCase):
         progressed = {**CONTEXT, "stage": "PRE_TREATMENT", "version": 2}
         connection, connect = self.connection([progressed])
         with patch.object(service, "_connect", connect), self.assertRaises(AppError) as caught:
-            service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 1)
+            service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 1, Role.DENTIST)
 
         self.assertEqual(caught.exception.payload["code"], "STALE_ENCOUNTER_VERSION")
         self.assertEqual(len(connection.calls), 1)
@@ -94,7 +99,7 @@ class EncounterTest(unittest.TestCase):
         progressed = {**CONTEXT, "stage": "PRE_TREATMENT", "version": 2}
         connection, connect = self.connection([CONTEXT, None, progressed])
         with patch.object(service, "_connect", connect), self.assertRaises(AppError) as caught:
-            service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 1)
+            service.advance_stage(CONTEXT["id"], "PRE_TREATMENT", 1, Role.DENTIST)
 
         self.assertEqual(caught.exception.status_code, 409)
         self.assertEqual(caught.exception.payload["code"], "STALE_ENCOUNTER_VERSION")
@@ -114,7 +119,7 @@ class EncounterTest(unittest.TestCase):
         for role in (Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST):
             with self.subTest(role=role), patch.object(encounter_router, "advance_stage", return_value=CONTEXT) as advance:
                 encounter_router.change_stage(CONTEXT["id"], change, role)
-            advance.assert_called_once()
+            advance.assert_called_once_with(CONTEXT["id"], change.stage, change.version, role)
 
     def test_stage_change_requires_a_positive_version(self):
         for version in (0, -1):
@@ -145,7 +150,7 @@ class EncounterTest(unittest.TestCase):
 
         with patch.object(service, "_connect", connect):
             for version, stage in enumerate(("PRE_TREATMENT", "TREATMENT", "POST_TREATMENT", "CLOSED"), 1):
-                result = service.advance_stage(CONTEXT["id"], stage, version)
+                result = service.advance_stage(CONTEXT["id"], stage, version, Role.DENTIST)
                 self.assertEqual(result["version"], version + 1)
                 self.assertEqual(result["patient"], CONTEXT["patient"])
                 self.assertEqual(result["appointment"], CONTEXT["appointment"])
@@ -156,6 +161,24 @@ class EncounterTest(unittest.TestCase):
             service.get_encounter("missing")
         self.assertEqual(caught.exception.status_code, 404)
 
+    def test_stage_history_uses_append_only_safe_audit_metadata(self):
+        transition = {
+            "id": "00000000-0000-0000-0000-000000000010",
+            "from_stage": "CHECK_IN",
+            "to_stage": "PRE_TREATMENT",
+            "actor_role": "DENTIST",
+            "from_version": 1,
+            "to_version": 2,
+            "occurred_at": "2026-07-17T02:01:00+00:00",
+        }
+        connection, connect = self.connection([CONTEXT, [transition]])
+        with patch.object(service, "_connect", connect):
+            result = service.get_stage_transitions(CONTEXT["id"])
+
+        self.assertEqual(result, [transition])
+        self.assertIn("ENCOUNTER_STAGE_CHANGED", connection.calls[1][0])
+        self.assertIn("ORDER BY created_at, id", connection.calls[1][0])
+
     def test_frontend_preserves_context_and_handles_pending_and_stale_requests(self):
         source = (ROOT / "frontend/src/features/encounter/index.jsx").read_text(encoding="utf-8")
 
@@ -163,15 +186,19 @@ class EncounterTest(unittest.TestCase):
         self.assertIn("aria-current", source)
         self.assertIn("disabled={isAdvancing}", source)
         self.assertIn("STALE_ENCOUNTER_VERSION", source)
-        self.assertIn("await load()", source)
+        self.assertIn("await load(undefined, true)", source)
+        self.assertIn("URLSearchParams", source)
+        self.assertIn("careguard.demoRole", source)
+        self.assertIn("Xác nhận đóng ca", source)
+        self.assertIn("visibilitychange", source)
+        self.assertNotIn("const DEMO_ROLE", source)
         self.assertNotIn("stage: stages[stages.indexOf(data.stage) + 1]", source)
 
     def test_demo_bootstrap_registers_encounter_and_api_proxy(self):
-        from backend.app.main import app
-
         paths = {route.path for route in app.routes}
         self.assertIn("/api/v1/encounters/{encounter_id}", paths)
         self.assertIn("/api/v1/encounters/{encounter_id}/stage", paths)
+        self.assertIn("/api/v1/encounters/{encounter_id}/transitions", paths)
 
         registry = (ROOT / "frontend/src/routes.js").read_text(encoding="utf-8")
         vite_config = (ROOT / "frontend/vite.config.js").read_text(encoding="utf-8")
@@ -181,6 +208,64 @@ class EncounterTest(unittest.TestCase):
         self.assertIn('"/api"', vite_config)
         self.assertIn('"http://localhost:8000"', vite_config)
         self.assertIn("API_PROXY_TARGET: http://api:8000", compose)
+
+
+class EncounterHttpContractTest(unittest.TestCase):
+    client = TestClient(app, raise_server_exceptions=False)
+    headers = {"X-Demo-Role": "DENTIST"}
+
+    def test_missing_and_invalid_demo_roles_use_error_contract(self):
+        missing = self.client.get(f"/api/v1/encounters/{CONTEXT['id']}")
+        invalid = self.client.get(
+            f"/api/v1/encounters/{CONTEXT['id']}",
+            headers={"X-Demo-Role": "ADMIN"},
+        )
+
+        self.assertEqual(missing.status_code, 401)
+        self.assertEqual(invalid.status_code, 403)
+        self.assertEqual(set(missing.json()), {"code", "message", "details"})
+        self.assertEqual(set(invalid.json()), {"code", "message", "details"})
+
+    def test_invalid_uuid_and_body_use_sanitized_validation_contract(self):
+        invalid_uuid = self.client.get("/api/v1/encounters/not-a-uuid", headers=self.headers)
+        invalid_body = self.client.post(
+            f"/api/v1/encounters/{CONTEXT['id']}/stage",
+            headers=self.headers,
+            json={"stage": "PRE_TREATMENT", "version": 0},
+        )
+
+        for response in (invalid_uuid, invalid_body):
+            self.assertEqual(response.status_code, 422)
+            self.assertEqual(response.json()["code"], "VALIDATION_ERROR")
+            self.assertEqual(set(response.json()), {"code", "message", "details"})
+            self.assertNotIn("traceback", response.text.lower())
+
+    def test_get_response_model_exposes_capability_without_extra_fields(self):
+        with patch.object(encounter_router, "get_encounter", return_value={**CONTEXT, "internal_secret": "never-return"}):
+            response = self.client.get(f"/api/v1/encounters/{CONTEXT['id']}", headers=self.headers)
+
+        self.assertEqual(response.status_code, 200)
+        body = response.json()
+        self.assertEqual(body["next_stage"], "PRE_TREATMENT")
+        self.assertTrue(body["can_advance"])
+        self.assertNotIn("internal_secret", body)
+
+    def test_read_only_roles_can_read_but_cannot_advance(self):
+        for role in ("PATIENT", "QA"):
+            with self.subTest(role=role), patch.object(encounter_router, "get_encounter", return_value=CONTEXT):
+                read = self.client.get(
+                    f"/api/v1/encounters/{CONTEXT['id']}",
+                    headers={"X-Demo-Role": role},
+                )
+            write = self.client.post(
+                f"/api/v1/encounters/{CONTEXT['id']}/stage",
+                headers={"X-Demo-Role": role},
+                json={"stage": "PRE_TREATMENT", "version": 1},
+            )
+            self.assertEqual(read.status_code, 200)
+            self.assertFalse(read.json()["can_advance"])
+            self.assertEqual(write.status_code, 403)
+            self.assertEqual(write.json()["code"], "ROLE_FORBIDDEN")
 
 
 if __name__ == "__main__":

@@ -12,8 +12,9 @@ Hiển thị hồ sơ synthetic, header, năm stage và chỉ cho chuyển sang 
 ## Consumes / produces
 React export bắt buộc: `export const route = { path, label, Component }`; integrator import vào `frontend/src/routes.js`.
 - Đọc core `patients`, `appointments`, `encounters`; dùng `EncounterStage` và `X-Demo-Role`.
-- `GET /api/v1/encounters/{id}` → patient, appointment, encounter, `stage`, `version`.
-- `POST /api/v1/encounters/{id}/stage` body `{stage, version}` → encounter mới; lỗi `{code,message,details}`.
+- `GET /api/v1/encounters/{id}` → patient, appointment, encounter, `stage`, `version`, `next_stage`, `can_advance`.
+- `GET /api/v1/encounters/{id}/transitions` → stage transition history từ audit-safe metadata.
+- `POST /api/v1/encounters/{id}/stage` body `{stage, version}` → encounter mới và append transition audit; lỗi `{code,message,details}`.
 - Không tạo evidence.
 
 ## Các bước
@@ -27,7 +28,7 @@ Mở được UUID seed; đi đúng năm stage không mất context/version; sta
 ## Handoff integrator
 Router export: `backend.app.features.encounter:router`, prefix `/api/v1/encounters`.
 Route export: `frontend/src/features/encounter/index.jsx:route`, URL `/encounter`.
-Verification hiện tại: `.venv\Scripts\python.exe -m unittest discover -s tests -v` — 18 passed; backend compile, frontend production build và Docker smoke test pass. Base implementation commit `1914561`; follow-up hardening/integration đang ở working tree và cần ghi commit hash khi bàn giao.
+Verification hiện tại: unit/HTTP suite — 23 passed; PostgreSQL concurrency test — 1 passed khi đặt `ENCOUNTER_TEST_DATABASE_URL`; backend compile và frontend production build pass. Không có biến DB thì concurrency test chủ động skip. Base implementation commit `1914561`; follow-up hardening/integration đang ở working tree và cần ghi commit hash khi bàn giao.
 
 Integration exception: theo yêu cầu chạy demo đồng nhất cho cả nhóm, router/route đã được nối vào shared bootstrap ngay trên working tree này; Vite proxy dùng `api:8000` trong Compose và `localhost:8000` khi chạy local.
 

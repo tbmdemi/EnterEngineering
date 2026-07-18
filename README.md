@@ -30,6 +30,12 @@ Mở giao diện:
 - Encounter: http://localhost:5173/encounter
 - API: http://localhost:8000
 
+Lần đầu mở Encounter, chọn một trong năm demo role. Có thể deep-link trực tiếp tới context cụ thể:
+
+```text
+http://localhost:5173/encounter?id=00000000-0000-0000-0000-000000000003&role=DENTIST
+```
+
 Source backend và frontend được bind mount. Khi sửa Python, JSX hoặc CSS, chỉ cần lưu file và refresh trình duyệt; không cần chạy lại Compose hoặc build image.
 
 ## Các lệnh development thường dùng
@@ -87,7 +93,15 @@ CHECK_IN → PRE_TREATMENT → TREATMENT → POST_TREATMENT → CLOSED
 - Version cũ trả `409 STALE_ENCOUNTER_VERSION`.
 - Skip hoặc đi lùi trả `INVALID_STAGE_TRANSITION`.
 
-Giao diện Encounter đang dùng role demo `DENTIST`. Có thể bấm **Tiếp tục** để đi qua năm stage; version tăng sau mỗi lần chuyển.
+Giao diện không hard-code role: role được chọn trên màn hình, lưu trong session và phản ánh trên URL. `PATIENT`/`QA` thấy context nhưng chỉ được đọc. Có thể bấm **Tiếp tục** với role được phép; trước khi chuyển sang `CLOSED`, giao diện yêu cầu xác nhận.
+
+Nút **Làm mới** tải lại context và transition history. Khi quay lại tab, trang cũng tự refresh. Mỗi transition thành công được ghi append-only vào `audit_events` với action `ENCOUNTER_STAGE_CHANGED`; metadata chỉ chứa stage/version, không chứa PHI.
+
+Response Encounter có contract rõ ràng:
+
+```text
+id, stage, version, patient, appointment, next_stage, can_advance
+```
 
 ### Kiểm tra API bằng PowerShell
 
@@ -97,6 +111,9 @@ $headers = @{"X-Demo-Role" = "DENTIST"}
 
 # Đọc Encounter
 Invoke-RestMethod -Uri "http://localhost:8000/api/v1/encounters/$id" -Headers $headers
+
+# Đọc lịch sử chuyển stage
+Invoke-RestMethod -Uri "http://localhost:8000/api/v1/encounters/$id/transitions" -Headers $headers
 
 # Chuyển từ CHECK_IN sang PRE_TREATMENT
 $body = @{stage = "PRE_TREATMENT"; version = 1} | ConvertTo-Json
@@ -142,6 +159,13 @@ Set-Location ..
 cd frontend && npm run build
 ```
 
+PostgreSQL concurrency test cần database container đang chạy:
+
+```sh
+ENCOUNTER_TEST_DATABASE_URL='postgresql://careguard:careguard@localhost:5432/careguard?connect_timeout=5' \
+  .venv/bin/python -m unittest tests.encounter.test_postgres_concurrency -v
+```
+
 ### Test — Windows PowerShell
 
 ```powershell
@@ -151,6 +175,16 @@ Set-Location frontend
 npm.cmd run build
 Set-Location ..
 ```
+
+PostgreSQL concurrency test trên Windows PowerShell:
+
+```powershell
+$env:ENCOUNTER_TEST_DATABASE_URL = "postgresql://careguard:careguard@localhost:5432/careguard?connect_timeout=5"
+.\.venv\Scripts\python.exe -m unittest tests.encounter.test_postgres_concurrency -v
+Remove-Item Env:ENCOUNTER_TEST_DATABASE_URL
+```
+
+Test này tạo fixture riêng, gửi đồng thời hai transition cùng version, yêu cầu đúng một request thành công, request còn lại nhận `STALE_ENCOUNTER_VERSION`, sau đó tự xóa fixture. Nếu không đặt `ENCOUNTER_TEST_DATABASE_URL`, test được skip để unit test không phụ thuộc Docker.
 
 ## Chạy không có hot reload
 
