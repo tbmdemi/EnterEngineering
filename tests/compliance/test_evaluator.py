@@ -118,6 +118,37 @@ class ComplianceEvaluatorTest(unittest.TestCase):
         self.assertEqual(first, second)
         self.assertEqual(first, "enc-1:PRE_ALLERGY:dental-policy.v1")
 
+    def test_close_readiness_blocks_every_non_ready_obligation(self):
+        from backend.app.features.compliance.service import blockers
+
+        checks = [
+            {"code": "PRE_ALLERGY", "state": "SATISFIED", "owner_role": "ASSISTANT"},
+            {"code": "PRE_IMAGING", "state": "NOT_APPLICABLE", "owner_role": "DENTIST"},
+            {"code": "POST_RECALL", "state": "MISSING", "owner_role": "FRONT_DESK"},
+            {"code": "DOC_PROGRESS_NOTE", "state": "UNVERIFIED", "owner_role": "DENTIST"},
+        ]
+
+        self.assertEqual(
+            [item["code"] for item in blockers(checks)],
+            ["POST_RECALL", "DOC_PROGRESS_NOTE"],
+        )
+
+    def test_shared_demo_context_replaces_feature_hard_coded_roles(self):
+        root = Path(__file__).parents[2]
+        context = (root / "frontend/src/demo-context.jsx").read_text(encoding="utf-8")
+        self.assertIn("URLSearchParams", context)
+        self.assertIn("careguard.demoRole", context)
+        self.assertIn("careguard.encounterId", context)
+        for path in (
+            "documentation-ai/index.jsx",
+            "pre-treatment/index.jsx",
+            "coordination/index.jsx",
+            "post-treatment-chat/index.jsx",
+            "compliance/index.jsx",
+        ):
+            source = (root / "frontend/src/features" / path).read_text(encoding="utf-8")
+            self.assertIn("useDemoContext", source, path)
+
 
 if __name__ == "__main__":
     unittest.main()

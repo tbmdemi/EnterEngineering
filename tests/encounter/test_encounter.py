@@ -112,6 +112,29 @@ class EncounterTest(unittest.TestCase):
         self.assertEqual(caught.exception.payload["details"]["current_stage"], "PRE_TREATMENT")
         self.assertEqual(len(connection.calls), 3)
 
+    def test_close_guard_blocks_before_stage_update_and_preserves_version(self):
+        post_treatment = {**CONTEXT, "stage": "POST_TREATMENT", "version": 4}
+        connection, connect = self.connection([post_treatment])
+        seen_connection = []
+
+        def guard(active_connection, encounter_id, role):
+            seen_connection.append(active_connection)
+            self.assertEqual(encounter_id, CONTEXT["id"])
+            self.assertEqual(role, Role.DENTIST)
+            return {
+                "code": "COMPLIANCE_NOT_READY",
+                "message": "Not ready",
+                "details": {"blockers": [{"code": "POST_RECALL", "state": "MISSING"}]},
+                "status_code": 409,
+            }
+
+        with patch.object(service, "_connect", connect), self.assertRaises(AppError) as caught:
+            service.advance_stage(CONTEXT["id"], "CLOSED", 4, Role.DENTIST, guard)
+
+        self.assertEqual(caught.exception.payload["code"], "COMPLIANCE_NOT_READY")
+        self.assertEqual(seen_connection, [connection])
+        self.assertFalse(any("UPDATE encounters" in query for query, _params in connection.calls))
+
     def test_stage_change_denies_patient_and_qa(self):
         change = StageChange(stage="PRE_TREATMENT", version=1)
         for role in (Role.PATIENT, Role.QA):
@@ -279,6 +302,25 @@ class EncounterHttpContractTest(unittest.TestCase):
                 )
                 self.assertEqual(write.status_code, 403)
                 self.assertEqual(write.json()["code"], "ROLE_FORBIDDEN")
+
+    def test_close_http_contract_uses_compliance_guard(self):
+        post_treatment = {**CONTEXT, "stage": "POST_TREATMENT", "version": 4}
+        error = AppError(
+            "COMPLIANCE_NOT_READY",
+            "Encounter cannot be closed",
+            {"blockers": [{"code": "POST_RECALL", "state": "MISSING", "owner_role": "FRONT_DESK"}]},
+            409,
+        )
+        with patch.object(encounter_router, "advance_stage", side_effect=error) as advance:
+            response = self.client.post(
+                f"/api/v1/encounters/{CONTEXT['id']}/stage",
+                headers=self.headers,
+                json={"stage": "CLOSED", "version": post_treatment["version"]},
+            )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["code"], "COMPLIANCE_NOT_READY")
+        self.assertIs(advance.call_args.args[-1], encounter_router.close_transition_guard)
 
 
 if __name__ == "__main__":

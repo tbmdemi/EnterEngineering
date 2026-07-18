@@ -9,12 +9,33 @@ services:
     volumes:
       - dental_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      # Check the same TCP listener used by other containers. During first-time
+      # initialization Postgres briefly accepts local socket connections before
+      # restarting, which must not release the migration job early.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U careguard -d careguard"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+  migrate:
+    image: postgres:16-alpine
+    environment:
+      PGPASSWORD: careguard
+    volumes:
+      - ./db/migrations:/migrations:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["sh", "-c", "for file in /migrations/*.sql; do echo Applying $$file; psql -v ON_ERROR_STOP=1 -h db -U careguard -d careguard -f $$file; done"]
+    restart: "no"
   api:
     build: ./backend
     environment:
       DATABASE_URL: postgresql://careguard:careguard@db:5432/careguard
     ports: ["8000:8000"]
-    depends_on: [db]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
   web:
     build: ./frontend
     environment:

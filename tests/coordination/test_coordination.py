@@ -12,6 +12,28 @@ from backend.app.core.errors import AppError
 module = importlib.import_module("backend.app.features.coordination.router")
 
 
+def transaction(*rows):
+    class Connection:
+        def __init__(self):
+            self.rows = iter(rows)
+            self.calls = []
+
+        def execute(self, query, params):
+            self.calls.append((query, params))
+            return self
+
+        def fetchone(self):
+            return next(self.rows, None)
+
+    connection = Connection()
+
+    @contextmanager
+    def connect():
+        yield connection
+
+    return connect, connection
+
+
 class CoordinationLogicTest(unittest.TestCase):
     def test_overlap_is_half_open_and_ignores_cancelled(self):
         at = lambda hour, minute=0: datetime(2026, 7, 17, hour, minute, tzinfo=timezone.utc)
@@ -89,11 +111,13 @@ class CoordinationLogicTest(unittest.TestCase):
             "id": "t1", "encounter_id": "e1", "owner_role": "ASSISTANT",
             "task_type": "HANDOFF", "status": "ACKNOWLEDGED",
         }
-        with patch.object(module, "_task", return_value=acknowledged):
+        connect, _ = transaction(acknowledged)
+        with patch.object(module, "_connect", connect):
             self.assertEqual(module.acknowledge("t1", Role.ASSISTANT), acknowledged)
 
         completed = {**acknowledged, "status": "COMPLETED"}
-        with patch.object(module, "_task", return_value=completed):
+        connect, _ = transaction(completed)
+        with patch.object(module, "_connect", connect):
             self.assertEqual(module.complete("t1", Role.ASSISTANT), completed)
         append_audit.assert_not_called()
 
@@ -102,7 +126,8 @@ class CoordinationLogicTest(unittest.TestCase):
             "id": "t1", "encounter_id": "e1", "owner_role": "DENTIST",
             "task_type": "REFERRAL", "status": "OPEN",
         }
-        with patch.object(module, "_task", return_value=referral), self.assertRaises(AppError) as caught:
+        connect, _ = transaction(referral)
+        with patch.object(module, "_connect", connect), self.assertRaises(AppError) as caught:
             module.acknowledge("t1", Role.DENTIST)
         self.assertEqual(caught.exception.payload["code"], "TASK_ACKNOWLEDGMENT_NOT_REQUIRED")
 
@@ -118,18 +143,8 @@ class CoordinationLogicTest(unittest.TestCase):
             "status": "OPEN",
         }
 
-        @contextmanager
-        def fake_connect():
-            class Connection:
-                def execute(self, query, params):
-                    self.query = query
-                    self.params = params
-                    return self
-                def fetchone(self):
-                    return {**task, "status": "ACKNOWLEDGED"}
-            yield Connection()
-
-        with patch.object(module, "_task", return_value=task), patch.object(module, "_connect", fake_connect):
+        connect, _ = transaction(task, {**task, "status": "ACKNOWLEDGED"})
+        with patch.object(module, "_connect", connect):
             response = module.acknowledge(task_id, Role.ASSISTANT)
 
         self.assertEqual(response["status"], "ACKNOWLEDGED")
@@ -140,7 +155,8 @@ class CoordinationLogicTest(unittest.TestCase):
         self.assertEqual(append_audit.call_args.args[1], "TASK_ACKNOWLEDGED")
 
     @patch.object(module, "append_audit")
-    def test_referral_can_complete_without_acknowledgment(self, append_audit):
+    @patch.object(module, "upsert_evidence")
+    def test_referral_can_complete_without_acknowledgment(self, upsert_evidence, append_audit):
         task_id = UUID("00000000-0000-0000-0000-000000000043")
         task = {
             "id": task_id,
@@ -150,27 +166,21 @@ class CoordinationLogicTest(unittest.TestCase):
             "status": "OPEN",
         }
 
-        @contextmanager
-        def fake_connect():
-            class Connection:
-                def execute(self, query, params):
-                    return self
-                def fetchone(self):
-                    return {**task, "status": "COMPLETED"}
-            yield Connection()
-
-        with patch.object(module, "_task", return_value=task), patch.object(module, "_connect", fake_connect):
+        connect, _ = transaction(task, {**task, "status": "COMPLETED"})
+        with patch.object(module, "_connect", connect):
             response = module.complete(task_id, Role.DENTIST)
 
         self.assertEqual(response["status"], "COMPLETED")
         self.assertEqual(append_audit.call_args.args[1], "TASK_COMPLETED")
+        self.assertEqual(upsert_evidence.call_args.args[1], "COORD_REFERRAL_OWNER")
 
     @patch.object(module, "append_audit")
     @patch.object(module, "upsert_evidence")
     @patch.object(module, "ensure_task")
     def test_evaluation_uses_stable_idempotency_key(self, ensure_task, upsert_evidence, _append_audit):
         ensure_task.return_value = {"id": "t1", "idempotency_key": "coord:e1:schedule-conflict"}
-        with patch.object(module, "require_encounter"), patch.object(module, "load_appointments", return_value=[
+        connect, _ = transaction()
+        with patch.object(module, "_connect", connect), patch.object(module, "require_encounter"), patch.object(module, "load_appointments", return_value=[
             {"id": "a", "is_anchor": True, "chair": "C1", "starts_at": datetime(2026, 1, 1, 9, tzinfo=timezone.utc), "ends_at": datetime(2026, 1, 1, 10, tzinfo=timezone.utc), "status": "BOOKED"},
             {"id": "b", "is_anchor": False, "chair": "C1", "starts_at": datetime(2026, 1, 1, 9, 30, tzinfo=timezone.utc), "ends_at": datetime(2026, 1, 1, 10, 30, tzinfo=timezone.utc), "status": "BOOKED"},
         ]):
@@ -198,7 +208,8 @@ class CoordinationLogicTest(unittest.TestCase):
     def test_created_task_key_is_server_derived_and_scoped_to_encounter(self, ensure_task, _append_audit):
         ensure_task.side_effect = lambda *args: {"encounter_id": str(args[0]), "idempotency_key": args[-1], "id": "t"}
         base = dict(obligation_code="COORD_HANDOFF_ACK", task_type="HANDOFF", owner_role=Role.ASSISTANT, due_at=None)
-        with patch.object(module, "require_encounter"):
+        connect, _ = transaction()
+        with patch.object(module, "_connect", connect), patch.object(module, "require_encounter"):
             one = module.create_task(module.TaskRequest(encounter_id=UUID("00000000-0000-0000-0000-000000000001"), **base), Role.FRONT_DESK)
             two = module.create_task(module.TaskRequest(encounter_id=UUID("00000000-0000-0000-0000-000000000002"), **base), Role.FRONT_DESK)
         self.assertNotEqual(one["idempotency_key"], two["idempotency_key"])

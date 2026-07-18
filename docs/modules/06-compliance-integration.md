@@ -26,5 +26,8 @@ Kết quả tái hiện được; draft không satisfied; evaluate lặp không 
 
 ## Handoff integrator
 Merged commits: encounter `20681fc`, documentation-AI `9df7d21`, pre-treatment `01bcf0b`, coordination `63a529d`, post-treatment/chat `226f41c`.
-Verification: `make check` — 54 tests pass, Python compile, Compose config và Vite production build; FastAPI health/error/OpenAPI smoke pass.
-Known limits: Docker daemon không chạy trong session nên chưa boot PostgreSQL/reset demo; chạy `make reset-demo` khi Docker sẵn sàng. Frontend dev server proxy `/api` tới service `api:8000` trong Compose.
+Current integration hardening: shared Encounter ID/role context đã được nối vào toàn bộ React route; readiness live và `COMPLIANCE_NOT_READY` hard-gate được áp dụng cho `POST_TREATMENT → CLOSED`; task/evidence/audit của Pre-treatment và Coordination dùng cùng transaction; Compose chạy migration idempotent trước API; Post-treatment không còn khóa vào Encounter seed. Coordination có action xử lý schedule conflict để demo có thể đạt readiness.
+
+Verification hiện tại: 95 tests được phát hiện — 93 pass, 2 PostgreSQL integration tests chủ động skip khi thiếu `ENCOUNTER_TEST_DATABASE_URL`; Python compile, Compose config và Vite production build pass. Hai PostgreSQL tests gồm optimistic concurrency và full dental flow từ evidence đến blocked-close rồi successful-close.
+
+Known limit của phiên verification này: Docker Desktop/daemon trên máy không khởi động được, nên chưa thể chạy hai PostgreSQL tests thật. Khi Docker sẵn sàng, chạy `docker compose up -d db migrate`, đặt `ENCOUNTER_TEST_DATABASE_URL`, rồi chạy lại toàn bộ test theo README. Frontend dev server proxy `/api` tới service `api:8000` trong Compose.

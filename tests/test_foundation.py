@@ -124,6 +124,15 @@ class FoundationContractTest(unittest.TestCase):
         self.assertIn("API_PROXY_TARGET", config)
         self.assertIn("API_PROXY_TARGET: http://api:8000", compose)
 
+    def test_compose_runs_idempotent_migrations_before_api(self):
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+        migration = (ROOT / "db/migrations/001_integrated_demo.sql").read_text(encoding="utf-8")
+
+        self.assertIn("migrate:", compose)
+        self.assertIn("condition: service_completed_successfully", compose)
+        self.assertIn("ADD COLUMN IF NOT EXISTS released_to_patient_at", migration)
+        self.assertIn("ON CONFLICT DO NOTHING", migration)
+
     def test_core_services_json_encode_uuid_values(self):
         from backend.app.core import services
 

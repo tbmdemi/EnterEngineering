@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { useDemoContext } from "../../demo-context";
 import "./style.css";
 
 const ROLES = [
@@ -24,7 +25,7 @@ async function parseResponse(response, fallbackMessage) {
 }
 
 function Coordination() {
-  const [role, setRole] = useState("FRONT_DESK");
+  const { encounterId, role, setRole } = useDemoContext();
   const [tasks, setTasks] = useState([]);
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
@@ -32,6 +33,12 @@ function Coordination() {
   const [scheduleResult, setScheduleResult] = useState(null);
 
   const load = useCallback(async signal => {
+    if (!ROLES.some(item => item.value === role)) {
+      setTasks([]);
+      setLoading(false);
+      setMessage("Chọn FRONT_DESK, ASSISTANT hoặc DENTIST để mở worklist.");
+      return;
+    }
     setLoading(true);
     setMessage("");
     try {
@@ -40,12 +47,13 @@ function Coordination() {
         signal,
       });
       setTasks(await parseResponse(response, "Không tải được worklist"));
+      setTasks(current => current.filter(task => task.encounter_id === encounterId));
     } catch (error) {
       if (error.name !== "AbortError") setMessage(error.message);
     } finally {
       if (!signal?.aborted) setLoading(false);
     }
-  }, [role]);
+  }, [encounterId, role]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -89,7 +97,25 @@ function Coordination() {
     }
   };
 
-  const activeRole = ROLES.find(item => item.value === role);
+  const resolveSchedule = async appointmentId => {
+    setPendingAction(`resolve:${appointmentId}`);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/v1/encounters/${encounterId}/coordination/resolve-schedule`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Demo-Role": role },
+        body: JSON.stringify({ appointment_id: appointmentId }),
+      });
+      setScheduleResult(await parseResponse(response, "Không xử lý được xung đột lịch"));
+      await load();
+    } catch (error) {
+      setMessage(error.message);
+    } finally {
+      setPendingAction("");
+    }
+  };
+
+  const activeRole = ROLES.find(item => item.value === role) || { label: role };
   const brief = useMemo(() => {
     const acknowledged = tasks.filter(task => task.status === "ACKNOWLEDGED").length;
     return `${tasks.length} việc đang mở${acknowledged ? `, ${acknowledged} đã xác nhận` : ""}`;
@@ -175,6 +201,9 @@ function Coordination() {
       {!scheduleResult.schedule_clear && <ul>{scheduleResult.conflicts.map(conflict => <li key={conflict.conflicts_with}>
         <strong>{conflict.chair}</strong>
         <span>{formatDateTime(conflict.starts_at)} – {formatDateTime(conflict.ends_at)}</span>
+        {role === "FRONT_DESK" && <button type="button" disabled={Boolean(pendingAction)} onClick={() => resolveSchedule(conflict.conflicts_with)}>
+          {pendingAction === `resolve:${conflict.conflicts_with}` ? "Đang xử lý..." : "Resolve conflict"}
+        </button>}
       </li>)}</ul>}
     </section>}
   </section>;

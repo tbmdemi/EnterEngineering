@@ -1,8 +1,7 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useCallback, useEffect, useState } from "react";
+import { DEMO_ROLES as ROLES, SEED_ENCOUNTER_ID, useDemoContext } from "../../demo-context";
 import "./style.css";
 
-const SEED_ENCOUNTER_ID = "00000000-0000-0000-0000-000000000003";
-const ROLES = ["FRONT_DESK", "ASSISTANT", "DENTIST", "PATIENT", "QA"];
 const ROLE_LABELS = {
   FRONT_DESK: "Lễ tân",
   ASSISTANT: "Trợ thủ",
@@ -44,24 +43,6 @@ async function requestJson(url, options = {}) {
   return body;
 }
 
-function getInitialContext() {
-  const params = new URLSearchParams(window.location.search);
-  const storedRole = window.sessionStorage.getItem("careguard.demoRole");
-  const requestedRole = params.get("role") ?? storedRole;
-  return {
-    encounterId: params.get("id") ?? SEED_ENCOUNTER_ID,
-    role: ROLES.includes(requestedRole) ? requestedRole : "",
-  };
-}
-
-function updateContextUrl(encounterId, role) {
-  const url = new URL(window.location.href);
-  url.searchParams.set("id", encounterId);
-  if (role) url.searchParams.set("role", role);
-  else url.searchParams.delete("role");
-  window.history.replaceState({}, "", url);
-}
-
 function formatAppointmentTime(value) {
   if (!value) return "—";
   return new Intl.DateTimeFormat("vi-VN", { dateStyle: "short", timeStyle: "short" }).format(new Date(value));
@@ -77,14 +58,13 @@ function getInitials(name) {
 }
 
 function Encounter() {
-  const initialContext = useMemo(getInitialContext, []);
-  const [encounterId] = useState(initialContext.encounterId);
-  const [role, setRole] = useState(initialContext.role);
+  // URLSearchParams and careguard.demoRole persistence live in the shared demo context.
+  const { encounterId, role, setRole } = useDemoContext();
   const [data, setData] = useState(null);
   const [history, setHistory] = useState([]);
   const [error, setError] = useState("");
   const [lastUpdated, setLastUpdated] = useState(null);
-  const [isLoading, setIsLoading] = useState(Boolean(initialContext.role));
+  const [isLoading, setIsLoading] = useState(Boolean(role));
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isAdvancing, setIsAdvancing] = useState(false);
   const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
@@ -135,9 +115,6 @@ function Encounter() {
     setHistory([]);
     setError("");
     setIsLoading(Boolean(selectedRole));
-    if (selectedRole) window.sessionStorage.setItem("careguard.demoRole", selectedRole);
-    else window.sessionStorage.removeItem("careguard.demoRole");
-    updateContextUrl(encounterId, selectedRole);
   };
 
   const performAdvance = async () => {
@@ -268,6 +245,16 @@ function Encounter() {
             ? <span className="encounter-readonly-badge">Vai trò này chỉ được xem</span>
             : <span className="encounter-complete-badge" role="status"><span aria-hidden="true">✓</span> Ca khám đã hoàn tất</span>}
       </footer>
+
+      {data.readiness && !data.readiness.ready && <section className="encounter-alert" role="alert">
+        <span aria-hidden="true">!</span>
+        <div>
+          <strong>Chưa thể đóng ca</strong>
+          <p>{data.readiness.blockers.length} nghĩa vụ compliance cần được xử lý.</p>
+          <p>{data.readiness.blockers.map(item => `${item.code} (${item.state})`).join(", ")}</p>
+          <a href={`/compliance?id=${encodeURIComponent(encounterId)}&role=${encodeURIComponent(role)}`}>Mở Compliance readiness</a>
+        </div>
+      </section>}
 
       <section className="encounter-history" aria-labelledby="history-title">
         <div><p className="encounter-eyebrow">Audit-safe timeline</p><h3 id="history-title">Lịch sử chuyển bước</h3></div>

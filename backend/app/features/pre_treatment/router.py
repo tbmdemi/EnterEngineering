@@ -144,8 +144,6 @@ def put_attestation(encounter_id: str, code: str, body: Attestation, role=Depend
         raise AppError("PRE_TREATMENT_ROLE_FORBIDDEN", "Only clinical staff can attest pre-treatment checks", {}, 403)
     if body.performed_at.tzinfo is None or body.performed_at.utcoffset() is None:
         raise AppError("PERFORMED_AT_TIMEZONE_REQUIRED", "performed_at must include a timezone", {}, 422)
-    _require_encounter(encounter_id)
-
     performed_at = body.performed_at.astimezone(timezone.utc).isoformat()
     value = {**body.value, "performed_at": performed_at}
     if "reviewed_source_refs" in body.value:
@@ -154,8 +152,28 @@ def put_attestation(encounter_id: str, code: str, body: Attestation, role=Depend
         if not isinstance(refs, list) or any(not isinstance(ref, str) or ref not in allowed_refs for ref in refs):
             raise AppError("PRE_TREATMENT_SOURCE_REF_INVALID", "reviewed_source_refs must use cited fixture references", {"code": code}, 422)
         value["reviewed_source_refs"] = list(dict.fromkeys(refs))
-    if code == "PRE_IMAGING" and _requires_imaging(encounter_id) is False:
-        value = {"not_applicable": True, "performed_at": performed_at}
-    evidence = services.upsert_evidence(encounter_id, code, "VERIFIED", value, "FORM", "pre-treatment", role.value)
-    services.append_audit(role.value, "PRE_TREATMENT_ATTESTED", "evidence", evidence["id"], encounter_id, {"code": code, "performed_at": performed_at})
+    with services._connect() as connection:
+        services.require_encounter_in(connection, encounter_id)
+        if code == "PRE_IMAGING":
+            procedure = connection.execute(
+                "SELECT state, value FROM evidence_items WHERE encounter_id = %s AND code = 'PRE_PROCEDURE'",
+                (encounter_id,),
+            ).fetchone()
+            requires_imaging = None
+            if procedure and procedure["state"] == "VERIFIED":
+                candidate = procedure["value"].get("requires_imaging")
+                requires_imaging = candidate if candidate is True or candidate is False else None
+            if requires_imaging is False:
+                value = {"not_applicable": True, "performed_at": performed_at}
+        evidence = services.upsert_evidence(
+            encounter_id, code, "VERIFIED", value, "FORM", "pre-treatment", role.value
+        )
+        services.append_audit(
+            role.value,
+            "PRE_TREATMENT_ATTESTED",
+            "evidence",
+            evidence["id"],
+            encounter_id,
+            {"code": code, "performed_at": performed_at},
+        )
     return evidence

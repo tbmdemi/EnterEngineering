@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
+import { useDemoContext } from "../../demo-context";
 import "./style.css";
 
-const ENCOUNTER_ID = "00000000-0000-0000-0000-000000000003";
 const INITIAL_VALUES = {
   PRE_MEDICAL_HISTORY: { summary: "" },
   PRE_ALLERGY: { status: "NONE_KNOWN", allergen: "" },
@@ -38,9 +38,9 @@ function evidenceSummary(item) {
 }
 
 function PreTreatment() {
+  const { encounterId, role, setRole } = useDemoContext();
   const [items, setItems] = useState([]);
   const [audit, setAudit] = useState([]);
-  const [role, setRole] = useState("ASSISTANT");
   const [values, setValues] = useState(INITIAL_VALUES);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState("");
@@ -55,7 +55,7 @@ function PreTreatment() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/v1/encounters/${ENCOUNTER_ID}/pre-treatment`, { headers: { "X-Demo-Role": role } });
+      const response = await fetch(`/api/v1/encounters/${encounterId}/pre-treatment`, { headers: { "X-Demo-Role": role } });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || "Unable to load checklist");
       setItems(result.items || []);
@@ -69,7 +69,7 @@ function PreTreatment() {
 
   useEffect(() => {
     void load();
-  }, [role]);
+  }, [encounterId, role]);
 
   useEffect(() => {
     const warn = event => {
@@ -128,7 +128,7 @@ function PreTreatment() {
     setSaving(item.code);
     setError("");
     try {
-      const response = await fetch(`/api/v1/encounters/${ENCOUNTER_ID}/pre-treatment/${item.code}`, {
+      const response = await fetch(`/api/v1/encounters/${encounterId}/pre-treatment/${item.code}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "X-Demo-Role": role },
         body: JSON.stringify({ value, performed_at: new Date().toISOString() }),
@@ -148,7 +148,7 @@ function PreTreatment() {
     setSaving("reset");
     setError("");
     try {
-      const response = await fetch(`/api/v1/encounters/${ENCOUNTER_ID}/pre-treatment/demo-reset`, { method: "POST", headers: { "X-Demo-Role": "QA" } });
+      const response = await fetch(`/api/v1/encounters/${encounterId}/pre-treatment/demo-reset`, { method: "POST", headers: { "X-Demo-Role": role } });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || "Unable to start a fresh demo scenario");
       setItems(result.items || []);
@@ -181,7 +181,7 @@ function PreTreatment() {
 
   return <section className="pre-treatment" aria-busy={loading || Boolean(saving)}>
     <a className="skip-link" href="#safety-checklist">Skip to Safety Checklist</a>
-    <header className="safety-header"><div><a href="/" className="back-link">← CareGuard Dental</a><p className="eyebrow">ENCOUNTER <span translate="no">DENTAL-001</span> · PRE-TREATMENT</p><h1>Safety Gate</h1><p>Confirm each required safety check before treatment.</p></div><div className="demo-controls"><label>Acting as<select value={role} onChange={event => setRole(event.target.value)} disabled={Boolean(saving)}><option value="ASSISTANT">Assistant</option><option value="DENTIST">Dentist</option></select></label><button type="button" className="reset-button" onClick={resetDemo} disabled={loading || Boolean(saving)}>{saving === "reset" ? "Starting…" : "Start fresh demo"}</button><span className={`readiness ${remaining ? "needs-action" : "ready"}`} aria-live="polite"><strong>{remaining ? `${remaining} Required` : "Ready for Review"}</strong><span>{items.length - remaining} of {items.length} checks complete</span></span></div></header>
+    <header className="safety-header"><div><a href="/" className="back-link">← CareGuard Dental</a><p className="eyebrow">ENCOUNTER <span translate="no">{encounterId.slice(-6)}</span> · PRE-TREATMENT</p><h1>Safety Gate</h1><p>Confirm each required safety check before treatment.</p></div><div className="demo-controls"><label>Acting as<select value={role} onChange={event => setRole(event.target.value)} disabled={Boolean(saving)}><option value="FRONT_DESK">Front Desk</option><option value="ASSISTANT">Assistant</option><option value="DENTIST">Dentist</option><option value="QA">QA</option></select></label><button type="button" className="reset-button" onClick={resetDemo} disabled={role !== "QA" || loading || Boolean(saving)}>{saving === "reset" ? "Starting…" : "Start fresh demo (QA)"}</button><span className={`readiness ${remaining ? "needs-action" : "ready"}`} aria-live="polite"><strong>{remaining ? `${remaining} Required` : "Ready for Review"}</strong><span>{items.length - remaining} of {items.length} checks complete</span></span></div></header>
 
     {error && <p className="form-error" role="alert">{error} Try again or reload the page.</p>}
     {loading ? <p className="loading" aria-live="polite">Loading Safety Checklist…</p> : items.length === 0 ? <div className="empty-state"><h2>No Safety Checks Found</h2><p>Reload the page or verify the encounter configuration.</p><button type="button" className="confirm-button" onClick={load}>Reload Checklist</button></div> : <div className="safety-layout"><section id="safety-checklist" className="checklist" aria-label="Pre-treatment checklist">{items.map(item => {

@@ -7,7 +7,16 @@ from pydantic import BaseModel
 
 from ...core.contracts import EvidenceState, Role, TaskStatus
 from ...core.errors import AppError
-from ...core.services import _connect, append_audit, ensure_task, require_encounter, upsert_evidence
+from ...core.services import (
+    _connect,
+    append_audit,
+    append_audit_in,
+    ensure_task,
+    require_encounter,
+    require_encounter_in,
+    upsert_evidence,
+    upsert_evidence_in,
+)
 from ...dependencies import require_demo_role
 
 
@@ -22,6 +31,10 @@ class TaskRequest(BaseModel):
     task_type: Literal["HANDOFF", "REFERRAL"]
     owner_role: Optional[Role] = None
     due_at: Optional[datetime] = None
+
+
+class ResolveScheduleRequest(BaseModel):
+    appointment_id: UUID
 
 
 def _staff(role):
@@ -66,9 +79,8 @@ def find_conflicts(appointments):
     ]
 
 
-def load_appointments(encounter_id):
-    with _connect() as connection:
-        return [dict(row) for row in connection.execute("""
+def _load_appointments_in(connection, encounter_id):
+    return [dict(row) for row in connection.execute("""
             WITH anchor AS (
               SELECT a.* FROM appointments a
               JOIN encounters e ON e.appointment_id = a.id
@@ -79,6 +91,11 @@ def load_appointments(encounter_id):
             WHERE a.id = anchor.id OR (a.status <> 'CANCELLED' AND a.starts_at < anchor.ends_at AND a.ends_at > anchor.starts_at)
             ORDER BY is_anchor DESC, a.starts_at, a.id
         """, (encounter_id,)).fetchall()]
+
+
+def load_appointments(encounter_id):
+    with _connect() as connection:
+        return _load_appointments_in(connection, encounter_id)
 
 
 @router.get("/api/v1/tasks")
@@ -115,68 +132,137 @@ def _task(task_id):
 @router.post("/api/v1/coordination/tasks")
 def create_task(request: TaskRequest, role=Depends(require_demo_role)):
     _staff(role)
-    require_encounter(request.encounter_id)
     validate_task_request(request.task_type, request.owner_role)
     owner = request.owner_role or role
     validate_task_request(request.task_type, owner)
     idempotency_key = f"coord:{request.encounter_id}:{request.task_type.lower()}:{request.obligation_code.lower()}"
-    task = ensure_task(request.encounter_id, request.obligation_code, request.task_type, owner.value, request.due_at, idempotency_key)
-    if request.task_type == "REFERRAL":
-        upsert_evidence(request.encounter_id, "COORD_REFERRAL_OWNER", EvidenceState.VERIFIED.value, {"owner_role": owner.value}, "TASK", str(task["id"]), role.value)
-    append_audit(role.value, "TASK_CREATED", "task", task["id"], request.encounter_id, {"task_type": request.task_type, "owner_role": owner.value})
+    with _connect() as connection:
+        require_encounter(request.encounter_id)
+        task = ensure_task(
+            request.encounter_id, request.obligation_code, request.task_type,
+            owner.value, request.due_at, idempotency_key,
+        )
+        if request.task_type == "REFERRAL":
+            upsert_evidence(
+                request.encounter_id, "COORD_REFERRAL_OWNER", EvidenceState.VERIFIED.value,
+                {"owner_role": owner.value}, "TASK", str(task["id"]), role.value,
+            )
+        append_audit(
+            role.value, "TASK_CREATED", "task", task["id"], request.encounter_id,
+            {"task_type": request.task_type, "owner_role": owner.value},
+        )
     return task
 
 
 @router.post("/api/v1/tasks/{task_id}/acknowledge")
 def acknowledge(task_id: UUID, role=Depends(require_demo_role)):
-    task = _task(task_id)
-    authorize_task_mutation(task, role)
-    if task["task_type"] != "HANDOFF":
-        raise AppError("TASK_ACKNOWLEDGMENT_NOT_REQUIRED", "Only handoff tasks can be acknowledged", status_code=409)
-    if task["status"] == TaskStatus.ACKNOWLEDGED.value:
-        return task
-    if task["status"] == TaskStatus.COMPLETED.value:
-        raise AppError("TASK_ALREADY_COMPLETED", "Completed task cannot be acknowledged", status_code=409)
-    if task["status"] == TaskStatus.CANCELLED.value:
-        raise AppError("TASK_CANCELLED", "Cancelled task cannot be acknowledged", status_code=409)
     with _connect() as connection:
+        row = connection.execute("SELECT * FROM tasks WHERE id = %s FOR UPDATE", (task_id,)).fetchone()
+        if not row:
+            raise AppError("TASK_NOT_FOUND", "Task was not found", status_code=404)
+        task = dict(row)
+        authorize_task_mutation(task, role)
+        if task["task_type"] != "HANDOFF":
+            raise AppError("TASK_ACKNOWLEDGMENT_NOT_REQUIRED", "Only handoff tasks can be acknowledged", status_code=409)
+        if task["status"] == TaskStatus.ACKNOWLEDGED.value:
+            return task
+        if task["status"] == TaskStatus.COMPLETED.value:
+            raise AppError("TASK_ALREADY_COMPLETED", "Completed task cannot be acknowledged", status_code=409)
+        if task["status"] == TaskStatus.CANCELLED.value:
+            raise AppError("TASK_CANCELLED", "Cancelled task cannot be acknowledged", status_code=409)
         updated = dict(connection.execute("UPDATE tasks SET status = 'ACKNOWLEDGED' WHERE id = %s RETURNING *", (task_id,)).fetchone())
-    if task["task_type"] == "HANDOFF":
-        upsert_evidence(task["encounter_id"], "COORD_HANDOFF_ACK", EvidenceState.VERIFIED.value, {"task_id": str(task_id), "acknowledged_by": role.value}, "TASK", str(task_id), role.value)
-    append_audit(role.value, "TASK_ACKNOWLEDGED", "task", task_id, task["encounter_id"], {})
+        upsert_evidence(
+            task["encounter_id"], "COORD_HANDOFF_ACK", EvidenceState.VERIFIED.value,
+            {"task_id": str(task_id), "acknowledged_by": role.value}, "TASK", str(task_id), role.value,
+        )
+        append_audit(role.value, "TASK_ACKNOWLEDGED", "task", task_id, task["encounter_id"], {})
     return updated
 
 
 @router.post("/api/v1/tasks/{task_id}/complete")
 def complete(task_id: UUID, role=Depends(require_demo_role)):
-    task = _task(task_id)
-    authorize_task_mutation(task, role)
-    if task["status"] == TaskStatus.COMPLETED.value:
-        return task
-    if task["status"] == TaskStatus.CANCELLED.value:
-        raise AppError("TASK_CANCELLED", "Cancelled task cannot be completed", status_code=409)
-    validate_completion(task)
     with _connect() as connection:
+        row = connection.execute("SELECT * FROM tasks WHERE id = %s FOR UPDATE", (task_id,)).fetchone()
+        if not row:
+            raise AppError("TASK_NOT_FOUND", "Task was not found", status_code=404)
+        task = dict(row)
+        authorize_task_mutation(task, role)
+        if task["status"] == TaskStatus.COMPLETED.value:
+            return task
+        if task["status"] == TaskStatus.CANCELLED.value:
+            raise AppError("TASK_CANCELLED", "Cancelled task cannot be completed", status_code=409)
+        validate_completion(task)
         updated = dict(connection.execute("UPDATE tasks SET status = 'COMPLETED' WHERE id = %s RETURNING *", (task_id,)).fetchone())
-    append_audit(role.value, "TASK_COMPLETED", "task", task_id, task["encounter_id"], {})
+        if task["task_type"] == "REFERRAL":
+            upsert_evidence(
+                task["encounter_id"], "COORD_REFERRAL_OWNER", EvidenceState.VERIFIED.value,
+                {"owner_role": task["owner_role"], "task_id": str(task_id)}, "TASK", str(task_id), role.value,
+            )
+        append_audit(role.value, "TASK_COMPLETED", "task", task_id, task["encounter_id"], {})
     return updated
 
 
 @router.post("/api/v1/encounters/{encounter_id}/coordination/evaluate")
 def evaluate_coordination(encounter_id: UUID, role=Depends(require_demo_role)):
     _staff(role)
-    require_encounter(encounter_id)
-    conflicts = find_conflicts(load_appointments(encounter_id))
-    upsert_evidence(encounter_id, "COORD_SCHEDULE_CLEAR", EvidenceState.VERIFIED.value, {"clear": not conflicts, "conflicts": conflicts}, "SCHEDULE", None, role.value)
-    task = None
-    if conflicts:
-        task = ensure_task(encounter_id, "COORD_SCHEDULE_CLEAR", "REVIEW_SCHEDULE_CONFLICT", Role.FRONT_DESK.value, None, f"coord:{encounter_id}:schedule-conflict")
-    else:
-        with _connect() as connection:
+    with _connect() as connection:
+        require_encounter(encounter_id)
+        conflicts = find_conflicts(load_appointments(encounter_id))
+        upsert_evidence(
+            encounter_id, "COORD_SCHEDULE_CLEAR", EvidenceState.VERIFIED.value,
+            {"clear": not conflicts, "conflicts": conflicts}, "SCHEDULE", None, role.value,
+        )
+        task = None
+        if conflicts:
+            task = ensure_task(
+                encounter_id, "COORD_SCHEDULE_CLEAR", "REVIEW_SCHEDULE_CONFLICT",
+                Role.FRONT_DESK.value, None, f"coord:{encounter_id}:schedule-conflict",
+            )
+        else:
             connection.execute(
                 """UPDATE tasks SET status = 'CANCELLED'
                    WHERE idempotency_key = %s AND status IN ('OPEN', 'ACKNOWLEDGED')""",
                 (f"coord:{encounter_id}:schedule-conflict",),
             )
-    append_audit(role.value, "COORDINATION_EVALUATED", "encounter", encounter_id, encounter_id, {"conflict_count": len(conflicts)})
+        append_audit(
+            role.value, "COORDINATION_EVALUATED", "encounter", encounter_id, encounter_id,
+            {"conflict_count": len(conflicts)},
+        )
     return {"schedule_clear": not conflicts, "conflicts": conflicts, "task": task}
+
+
+@router.post("/api/v1/encounters/{encounter_id}/coordination/resolve-schedule")
+def resolve_schedule_conflict(encounter_id: UUID, request: ResolveScheduleRequest, role=Depends(require_demo_role)):
+    if role != Role.FRONT_DESK:
+        raise AppError("ROLE_FORBIDDEN", "Only front desk can resolve schedule conflicts", status_code=403)
+    with _connect() as connection:
+        require_encounter_in(connection, encounter_id)
+        appointments = _load_appointments_in(connection, encounter_id)
+        conflict_ids = {str(item["conflicts_with"]) for item in find_conflicts(appointments)}
+        if str(request.appointment_id) not in conflict_ids:
+            raise AppError(
+                "SCHEDULE_CONFLICT_NOT_FOUND",
+                "Appointment is not an active conflict for this encounter",
+                {"appointment_id": str(request.appointment_id)},
+                409,
+            )
+        connection.execute(
+            "UPDATE appointments SET status = 'CANCELLED' WHERE id = %s",
+            (request.appointment_id,),
+        )
+        remaining = find_conflicts(_load_appointments_in(connection, encounter_id))
+        upsert_evidence_in(
+            connection, encounter_id, "COORD_SCHEDULE_CLEAR", EvidenceState.VERIFIED.value,
+            {"clear": not remaining, "conflicts": remaining}, "SCHEDULE", None, role.value,
+        )
+        if not remaining:
+            connection.execute(
+                """UPDATE tasks SET status = 'CANCELLED'
+                   WHERE idempotency_key = %s AND status IN ('OPEN', 'ACKNOWLEDGED')""",
+                (f"coord:{encounter_id}:schedule-conflict",),
+            )
+        append_audit_in(
+            connection, role.value, "SCHEDULE_CONFLICT_RESOLVED", "appointment", request.appointment_id,
+            encounter_id, {"remaining_conflicts": len(remaining)},
+        )
+    return {"schedule_clear": not remaining, "conflicts": remaining}

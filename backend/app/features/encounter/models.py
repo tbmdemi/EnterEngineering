@@ -21,6 +21,18 @@ class AppointmentSummary(BaseModel):
     status: str
 
 
+class ComplianceBlocker(BaseModel):
+    code: str
+    state: str
+    owner_role: Role
+
+
+class TransitionReadiness(BaseModel):
+    ready: bool
+    policy_version: str
+    blockers: list[ComplianceBlocker]
+
+
 class EncounterResponse(BaseModel):
     id: UUID
     stage: EncounterStage
@@ -29,6 +41,7 @@ class EncounterResponse(BaseModel):
     appointment: AppointmentSummary | None
     next_stage: EncounterStage | None
     can_advance: bool
+    readiness: TransitionReadiness | None = None
 
 
 class StageTransitionResponse(BaseModel):

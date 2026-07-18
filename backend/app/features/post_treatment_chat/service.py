@@ -2,6 +2,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -21,6 +22,7 @@ class ReleaseRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=1000)
+    encounter_id: UUID = UUID(DEMO_ENCOUNTER_ID)
 
 
 class ChatResponse(BaseModel):
@@ -45,9 +47,6 @@ def _require(role, allowed):
 
 def release_encounter(encounter_id, payload, role):
     _require(role, {Role.DENTIST})
-    if encounter_id != DEMO_ENCOUNTER_ID:
-        raise AppError("ENCOUNTER_NOT_FOUND", "Encounter was not found", status_code=404)
-
     items = (
         ("POST_CARE_INSTRUCTIONS", {"text": payload.care_instructions}),
         ("POST_RECALL", {"recall_at": payload.recall_at.isoformat()}),
@@ -83,8 +82,8 @@ def release_encounter(encounter_id, payload, role):
     return {"encounter_id": encounter_id, "evidence": evidence, "task": task, "released": True}
 
 
-def _audit_chat(intent, citations, escalation):
-    append_audit("PATIENT", "PORTAL_CHAT_ANSWERED", "encounter", DEMO_ENCOUNTER_ID, DEMO_ENCOUNTER_ID, {
+def _audit_chat(encounter_id, intent, citations, escalation):
+    append_audit("PATIENT", "PORTAL_CHAT_ANSWERED", "encounter", encounter_id, encounter_id, {
         "intent": intent, "result": "ESCALATED" if escalation else "ANSWERED" if citations else "ABSTAINED", "citation_count": len(citations)
     })
 
@@ -100,7 +99,7 @@ def chat(payload, role):
         with _connect() as connection:
             rows = connection.execute(
                 "SELECT code, value FROM evidence_items WHERE encounter_id = %s AND state = 'VERIFIED' AND released_to_patient_at IS NOT NULL ORDER BY code",
-                (DEMO_ENCOUNTER_ID,),
+                (str(payload.encounter_id),),
             ).fetchall()
         if rows:
             parts = [str(row["value"].get("text") or row["value"].get("recall_at") or row["value"].get("monitor_until")) for row in rows]
@@ -114,5 +113,5 @@ def chat(payload, role):
         else:
             card = next((card for card in cards if card["intent"] == "SYMPTOM_INFO" and not card.get("escalation") and any(key in message for key in card["keywords"])), None)
             response = ChatResponse(intent="SYMPTOM_INFO", answer=card["answer"], citations=[_citation(card)]) if card else ChatResponse(intent="SYMPTOM_INFO", answer="Tôi không có thông tin đã duyệt để trả lời câu hỏi này. Hãy liên hệ phòng khám.", citations=[])
-    _audit_chat(response.intent, response.citations, response.escalation)
+    _audit_chat(payload.encounter_id, response.intent, response.citations, response.escalation)
     return response

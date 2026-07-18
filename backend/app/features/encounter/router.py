@@ -7,6 +7,7 @@ from ...core.contracts import EncounterStage
 from ...core.contracts import Role
 from ...core.errors import AppError
 from ...dependencies import require_demo_role
+from ..compliance.service import close_readiness, close_transition_guard
 
 from .service import advance_stage, get_encounter
 from .service import get_stage_transitions
@@ -26,10 +27,12 @@ class StageChange(BaseModel):
 def _response(context, role):
     current_index = list(EncounterStage).index(EncounterStage(context["stage"]))
     next_stage = list(EncounterStage)[current_index + 1] if current_index + 1 < len(EncounterStage) else None
+    readiness = close_readiness(context["id"]) if next_stage == EncounterStage.CLOSED else None
     return {
         **context,
         "next_stage": next_stage,
-        "can_advance": role in STAGE_WRITERS and next_stage is not None,
+        "can_advance": role in STAGE_WRITERS and next_stage is not None and (not readiness or readiness["ready"]),
+        "readiness": readiness,
     }
 
 
@@ -51,4 +54,8 @@ def transitions(encounter_id: UUID, _role=Depends(require_demo_role)):
 def change_stage(encounter_id: UUID, change: StageChange, _role=Depends(require_demo_role)):
     if _role not in STAGE_WRITERS:
         raise AppError("ROLE_FORBIDDEN", "Role cannot change encounter stage", {"role": _role.value}, 403)
-    return _response(advance_stage(encounter_id, change.stage, change.version, _role), _role)
+    if change.stage == EncounterStage.CLOSED:
+        context = advance_stage(encounter_id, change.stage, change.version, _role, close_transition_guard)
+    else:
+        context = advance_stage(encounter_id, change.stage, change.version, _role)
+    return _response(context, _role)
