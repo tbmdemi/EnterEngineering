@@ -43,6 +43,19 @@ class FoundationContractTest(unittest.TestCase):
             self.assertEqual(set(caught.exception.payload), {"code", "message", "details"})
         self.assertEqual(parse_demo_role("DENTIST").value, "DENTIST")
 
+    def test_optional_demo_access_key_is_compared_server_side(self):
+        from backend.app.core.errors import AppError
+        from backend.app.core.security import require_demo_access
+
+        with patch.dict("os.environ", {}, clear=True):
+            self.assertIsNone(require_demo_access(None))
+        with patch.dict("os.environ", {"DEMO_ACCESS_TOKEN": "server-secret"}, clear=True):
+            self.assertIsNone(require_demo_access("server-secret"))
+            for value in (None, "wrong"):
+                with self.subTest(value=value), self.assertRaises(AppError) as caught:
+                    require_demo_access(value)
+                self.assertEqual(caught.exception.payload["code"], "DEMO_ACCESS_DENIED")
+
     def test_core_services_persist_and_return_dicts_idempotently(self):
         from backend.app.core import services
 
@@ -127,11 +140,37 @@ class FoundationContractTest(unittest.TestCase):
     def test_compose_runs_idempotent_migrations_before_api(self):
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         migration = (ROOT / "db/migrations/001_integrated_demo.sql").read_text(encoding="utf-8")
+        runner = (ROOT / "backend/migrate.py").read_text(encoding="utf-8")
+        baseline = (ROOT / "db/migrations/000_baseline.sql").read_text(encoding="utf-8")
 
         self.assertIn("migrate:", compose)
         self.assertIn("condition: service_completed_successfully", compose)
+        self.assertIn("schema_migrations", runner)
+        self.assertIn("pg_advisory_lock", runner)
+        self.assertIn("CREATE TABLE IF NOT EXISTS encounters", baseline)
         self.assertIn("ADD COLUMN IF NOT EXISTS released_to_patient_at", migration)
         self.assertIn("ON CONFLICT DO NOTHING", migration)
+
+    def test_deployment_assets_define_production_runtime_and_public_health(self):
+        from backend.app.main import app
+
+        paths = {route.path for route in app.routes}
+        self.assertIn("/api/health/live", paths)
+        self.assertIn("/api/health/ready", paths)
+
+        frontend_dockerfile = (ROOT / "frontend/Dockerfile").read_text(encoding="utf-8")
+        nginx = (ROOT / "frontend/nginx.conf").read_text(encoding="utf-8")
+        render = (ROOT / "render.yaml").read_text(encoding="utf-8")
+        production_compose = (ROOT / "docker-compose.prod.yml").read_text(encoding="utf-8")
+        api_client = (ROOT / "frontend/src/api.js").read_text(encoding="utf-8")
+
+        self.assertIn("FROM nginx:alpine AS production", frontend_dockerfile)
+        self.assertIn("try_files $uri $uri/ /index.html", nginx)
+        self.assertIn("VITE_API_BASE_URL", api_client)
+        self.assertIn("X-Demo-Access-Token", api_client)
+        self.assertIn("healthCheckPath: /api/health/ready", render)
+        self.assertIn("preDeployCommand: python /app/migrate.py", render)
+        self.assertIn("ports: !reset []", production_compose)
 
     def test_core_services_json_encode_uuid_values(self):
         from backend.app.core import services

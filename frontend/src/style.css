@@ -67,6 +67,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   font-weight: 650;
 }
 .demo-context-controls input { width: min(22rem, 38vw); padding: 0 0.7rem; }
+.demo-context-controls .demo-access-control input { width: min(13rem, 24vw); }
 .demo-context-controls select { padding: 0 2rem 0 0.7rem; }
 
 .app-module-nav {

@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { apiFetch } from "../../api";
 import { useDemoContext } from "../../demo-context";
 import "./style.css";
 
@@ -28,7 +29,7 @@ function Component() {
     setError("");
     setPending(key);
     try {
-      const response = await fetch(path, { method, headers: { "X-Demo-Role": role } });
+      const response = await apiFetch(path, { method, headers: { "X-Demo-Role": role } });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(body.message || "Request failed");
       setResult(body);

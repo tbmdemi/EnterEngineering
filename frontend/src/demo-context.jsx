@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useMemo, useState } from "react";
+import { ACCESS_TOKEN_KEY } from "./api";
 
 export const SEED_ENCOUNTER_ID = "00000000-0000-0000-0000-000000000003";
 export const DEMO_ROLES = ["FRONT_DESK", "ASSISTANT", "DENTIST", "PATIENT", "QA"];
@@ -11,6 +12,7 @@ function initialValue() {
   return {
     encounterId: params.get("id") || window.sessionStorage.getItem("careguard.encounterId") || SEED_ENCOUNTER_ID,
     role: DEMO_ROLES.includes(requestedRole) ? requestedRole : "DENTIST",
+    accessToken: window.sessionStorage.getItem(ACCESS_TOKEN_KEY) || "",
   };
 }
 
@@ -28,6 +30,8 @@ export function DemoProvider({ children }) {
     const value = { ...current, ...next };
     window.sessionStorage.setItem("careguard.demoRole", value.role);
     window.sessionStorage.setItem("careguard.encounterId", value.encounterId);
+    if (value.accessToken) window.sessionStorage.setItem(ACCESS_TOKEN_KEY, value.accessToken);
+    else window.sessionStorage.removeItem(ACCESS_TOKEN_KEY);
     syncUrl(value.encounterId, value.role);
     return value;
   });
@@ -36,6 +40,7 @@ export function DemoProvider({ children }) {
     ...context,
     setRole: role => update({ role }),
     setEncounterId: encounterId => update({ encounterId }),
+    setAccessToken: accessToken => update({ accessToken }),
     routeHref: path => `${path}?id=${encodeURIComponent(context.encounterId)}&role=${encodeURIComponent(context.role)}`,
   }), [context]);
 

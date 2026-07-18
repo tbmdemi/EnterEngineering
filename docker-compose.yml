@@ -18,15 +18,18 @@ services:
       timeout: 3s
       retries: 20
   migrate:
-    image: postgres:16-alpine
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
-      PGPASSWORD: careguard
+      DATABASE_URL: postgresql://careguard:careguard@db:5432/careguard
+      MIGRATION_DIR: /migrations
     volumes:
       - ./db/migrations:/migrations:ro
     depends_on:
       db:
         condition: service_healthy
-    command: ["sh", "-c", "for file in /migrations/*.sql; do echo Applying $$file; psql -v ON_ERROR_STOP=1 -h db -U careguard -d careguard -f $$file; done"]
+    command: ["python", "/app/migrate.py"]
     restart: "no"
   demo-reset:
     profiles: ["tools"]
@@ -42,18 +45,31 @@ services:
     command: ["sh", "-c", "psql -v ON_ERROR_STOP=1 -h db -U careguard -d careguard -f /demo/reset_scenarios.sql && psql -v ON_ERROR_STOP=1 -h db -U careguard -d careguard -f /migrations/002_demo_scenarios.sql"]
     restart: "no"
   api:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     environment:
       DATABASE_URL: postgresql://careguard:careguard@db:5432/careguard
+      AI_MODE: fixture
     ports: ["8000:8000"]
     depends_on:
       migrate:
         condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health/ready', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
   web:
-    build: ./frontend
+    build:
+      context: ./frontend
+      target: production
     environment:
       API_PROXY_TARGET: http://api:8000
-    ports: ["5173:5173"]
-    depends_on: [api]
+    ports: ["8080:80"]
+    depends_on:
+      api:
+        condition: service_healthy
 volumes:
   dental_data:

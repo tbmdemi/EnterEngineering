@@ -1,4 +1,5 @@
 import React, { useMemo, useState } from "react";
+import { apiFetch } from "../../api";
 import { useDemoContext } from "../../demo-context";
 import "./style.css";
 
@@ -35,7 +36,7 @@ function PostTreatmentChat() {
     setError("");
     setReply(null);
     try {
-      const response = await fetch(url, {
+      const response = await apiFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Demo-Role": role },
         body: JSON.stringify(body),

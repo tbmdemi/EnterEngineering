@@ -26,11 +26,11 @@ Các service Docker Compose:
 | Service | Chức năng | Trạng thái bình thường |
 |---|---|---|
 | `db` | PostgreSQL dùng chung cho tất cả feature | `Up (healthy)` |
-| `migrate` | Dùng `psql` để áp dụng migration rồi kết thúc | `Exited (0)` |
+| `migrate` | Dùng migration runner có advisory lock/checksum rồi kết thúc | `Exited (0)` |
 | `api` | FastAPI backend | `Up` |
 | `web` | React/Vite frontend | `Up` |
 
-Docker Desktop có thể hiển thị cả `db` và `migrate` dưới image `postgres:16-alpine`. Đây không phải hai database: chỉ `db` chạy PostgreSQL server; `migrate` là job tạm thời và dừng với exit code `0` là đúng thiết kế.
+`migrate` dùng cùng backend image để có PostgreSQL client library, nhưng không phải API thứ hai và không phải database thứ hai. Chỉ `db` chạy PostgreSQL server; `migrate` là job tạm thời và dừng với exit code `0` là đúng thiết kế.
 
 ## 2. Yêu cầu
 
@@ -492,3 +492,4 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml logs migrate
 - [Module Coordination](docs/modules/05-coordination.md)
 - [Module Compliance & Integration](docs/modules/06-compliance-integration.md)
 - [Quy tắc branch và merge](docs/branch-rules.md)
+- [Hướng dẫn deploy Render/VPS](docs/deployment.md)

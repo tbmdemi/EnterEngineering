@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { apiFetch } from "../../api";
 import { useDemoContext } from "../../demo-context";
 import "./style.css";
 
@@ -50,7 +51,7 @@ function Coordination() {
     setLoading(true);
     setMessage("");
     try {
-      const response = await fetch(`/api/v1/tasks?owner_role=${role}`, {
+      const response = await apiFetch(`/api/v1/tasks?owner_role=${role}`, {
         headers: { "X-Demo-Role": role },
         signal,
       });
@@ -76,7 +77,7 @@ function Coordination() {
     setPendingAction(actionKey);
     setMessage("");
     try {
-      const response = await fetch(`/api/v1/tasks/${task.id}/${action}`, {
+      const response = await apiFetch(`/api/v1/tasks/${task.id}/${action}`, {
         method: "POST",
         headers: { "X-Demo-Role": role },
       });
@@ -94,7 +95,7 @@ function Coordination() {
     setPendingAction(actionKey);
     setMessage("");
     try {
-      const response = await fetch(`/api/v1/encounters/${task.encounter_id}/coordination/evaluate`, {
+      const response = await apiFetch(`/api/v1/encounters/${task.encounter_id}/coordination/evaluate`, {
         method: "POST",
         headers: { "X-Demo-Role": role },
       });
@@ -116,7 +117,7 @@ function Coordination() {
     setPendingAction(`resolve:${appointmentId}`);
     setMessage("");
     try {
-      const response = await fetch(`/api/v1/encounters/${encounterId}/coordination/resolve-schedule`, {
+      const response = await apiFetch(`/api/v1/encounters/${encounterId}/coordination/resolve-schedule`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Demo-Role": role },
         body: JSON.stringify({

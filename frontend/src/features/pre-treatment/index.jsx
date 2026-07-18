@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { apiFetch } from "../../api";
 import { useDemoContext } from "../../demo-context";
 import "./style.css";
 
@@ -57,7 +58,7 @@ function PreTreatment() {
     setLoading(true);
     setError("");
     try {
-      const response = await fetch(`/api/v1/encounters/${encounterId}/pre-treatment`, { headers: { "X-Demo-Role": role } });
+      const response = await apiFetch(`/api/v1/encounters/${encounterId}/pre-treatment`, { headers: { "X-Demo-Role": role } });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || "Unable to load checklist");
       setItems(result.items || []);
@@ -133,7 +134,7 @@ function PreTreatment() {
     setSaving(item.code);
     setError("");
     try {
-      const response = await fetch(`/api/v1/encounters/${encounterId}/pre-treatment/${item.code}`, {
+      const response = await apiFetch(`/api/v1/encounters/${encounterId}/pre-treatment/${item.code}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "X-Demo-Role": role },
         body: JSON.stringify({ value, performed_at: new Date().toISOString() }),
@@ -153,7 +154,7 @@ function PreTreatment() {
     setSaving("reset");
     setError("");
     try {
-      const response = await fetch(`/api/v1/encounters/${encounterId}/pre-treatment/demo-reset`, { method: "POST", headers: { "X-Demo-Role": role } });
+      const response = await apiFetch(`/api/v1/encounters/${encounterId}/pre-treatment/demo-reset`, { method: "POST", headers: { "X-Demo-Role": role } });
       const result = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(result.message || "Unable to start a fresh demo scenario");
       setItems(result.items || []);
@@ -183,7 +184,7 @@ function PreTreatment() {
     setSaving("procedure");
     setError("");
     try {
-      const response = await fetch(`/api/v1/encounters/${encounterId}/pre-treatment/procedure`, {
+      const response = await apiFetch(`/api/v1/encounters/${encounterId}/pre-treatment/procedure`, {
         method: "PUT",
         headers: { "Content-Type": "application/json", "X-Demo-Role": role },
         body: JSON.stringify({ requires_imaging: procedureChoice === "required", performed_at: new Date().toISOString() }),

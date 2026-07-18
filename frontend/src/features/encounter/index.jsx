@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
+import { apiFetch } from "../../api";
 import { DEMO_ROLES as ROLES, SEED_ENCOUNTER_ID, useDemoContext } from "../../demo-context";
 import "./style.css";
 
@@ -35,7 +36,7 @@ class ApiError extends Error {
 }
 
 async function requestJson(url, options = {}) {
-  const response = await fetch(url, options);
+  const response = await apiFetch(url, options);
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new ApiError(body.code ?? "REQUEST_FAILED", body.message ?? "Yêu cầu không thành công");

@@ -1,4 +1,5 @@
 import React, { useState } from "react";
+import { apiFetch } from "../../api";
 import { useDemoContext } from "../../demo-context";
 import "./style.css";
 
@@ -25,7 +26,7 @@ function DocumentationAi() {
     setPending("documentation");
     setStatus({ type: "", message: "" });
     try {
-      const response = await fetch("/api/v1/documentation", {
+      const response = await apiFetch("/api/v1/documentation", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Demo-Role": role },
         body: JSON.stringify({
@@ -53,7 +54,7 @@ function DocumentationAi() {
     setPending("extract");
     setStatus({ type: "", message: "" });
     try {
-      const response = await fetch("/api/v1/ai/extract-note", {
+      const response = await apiFetch("/api/v1/ai/extract-note", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Demo-Role": role },
         body: JSON.stringify({ encounter_id: encounterId, note }),
@@ -72,7 +73,7 @@ function DocumentationAi() {
     setPending(action);
     setStatus({ type: "", message: "" });
     try {
-      const response = await fetch(`/api/v1/ai/runs/${run.ai_run_id}/${action}`, {
+      const response = await apiFetch(`/api/v1/ai/runs/${run.ai_run_id}/${action}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-Demo-Role": role },
         body: action === "accept" ? JSON.stringify({ evidence_code }) : undefined,

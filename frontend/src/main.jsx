@@ -53,7 +53,7 @@ function WorkflowNavigation({ activeRoute, routeHref, position = "top" }) {
 }
 
 function AppShell() {
-  const { encounterId, role, routeHref, setEncounterId, setRole } = useDemoContext();
+  const { accessToken, encounterId, role, routeHref, setAccessToken, setEncounterId, setRole } = useDemoContext();
   const activeRoute = featureRoutes.find(({ path }) => path === window.location.pathname)
     || (window.location.pathname === "/" ? featureRoutes[0] : null);
 
@@ -75,6 +75,9 @@ function AppShell() {
             <select value={role} onChange={event => setRole(event.target.value)}>
               {DEMO_ROLES.map(item => <option value={item} key={item}>{ROLE_LABELS[item]}</option>)}
             </select>
+          </label>
+          <label className="demo-access-control"><span>Demo access key</span>
+            <input type="password" value={accessToken} onChange={event => setAccessToken(event.target.value)} aria-label="Demo access key" autoComplete="current-password" placeholder="Required on public demo" />
           </label>
         </div>
       </div>

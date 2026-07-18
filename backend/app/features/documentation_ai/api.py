@@ -161,10 +161,16 @@ def save_documentation(data: DocumentationInput, role: Role = Depends(require_de
 @router.post("/api/v1/ai/extract-note", response_model=Extraction)
 def extract_note(data: ExtractNoteInput, role: Role = Depends(require_demo_role)):
     _require_role(role, Role.ASSISTANT, Role.DENTIST)
-    try:
-        facts, model = _live_extract(data.note)
-    except Exception:
+    ai_mode = os.environ.get("AI_MODE", "fixture").strip().lower()
+    if ai_mode == "fixture":
         facts, model = _fixture(data.note), "fixture-v1"
+    elif ai_mode == "live":
+        try:
+            facts, model = _live_extract(data.note)
+        except Exception as error:
+            raise AppError("AI_PROVIDER_UNAVAILABLE", "The configured AI provider is unavailable", status_code=503) from error
+    else:
+        raise AppError("AI_MODE_INVALID", "AI_MODE must be fixture or live", status_code=500)
     run_id = _save_run(data.encounter_id, model, facts)
     return Extraction(ai_run_id=run_id, facts=facts)
 
