@@ -1,0 +1,242 @@
+.coordination {
+  color: #17202a;
+  max-width: 72rem;
+  margin: 0 auto;
+  padding: 2rem clamp(1rem, 4vw, 3rem) 4rem;
+}
+
+.coordination__header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 2rem;
+  padding-bottom: 1.5rem;
+  border-bottom: 1px solid #dfe4e8;
+}
+
+.coordination__eyebrow {
+  margin: 0 0 0.35rem;
+  color: #52706b;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.coordination h1,
+.coordination h2,
+.coordination p {
+  margin-top: 0;
+}
+
+.coordination h1 {
+  margin-bottom: 0;
+  font-size: clamp(1.75rem, 5vw, 2.5rem);
+  line-height: 1.1;
+}
+
+.coordination__brief {
+  display: grid;
+  min-width: 12rem;
+  gap: 0.2rem;
+  text-align: right;
+}
+
+.coordination__brief span {
+  color: #65717b;
+  font-size: 0.85rem;
+}
+
+.coordination__roles {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  max-width: 34rem;
+  margin: 1.5rem 0;
+  padding: 0.25rem;
+  background: #edf1f2;
+  border-radius: 6px;
+}
+
+.coordination__roles button {
+  min-height: 2.5rem;
+  border: 0;
+  border-radius: 4px;
+  color: #4e5c65;
+  background: transparent;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.coordination__roles button.is-active {
+  color: #112b27;
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(20 35 40 / 14%);
+}
+
+.coordination__alert,
+.coordination__empty {
+  padding: 1rem;
+  border-left: 3px solid #b5413c;
+  background: #fff4f2;
+}
+
+.coordination__empty {
+  min-height: 5rem;
+  display: grid;
+  place-items: center;
+  border: 1px dashed #bdc7cc;
+  background: #f8fafb;
+  color: #65717b;
+}
+
+.coordination__list {
+  display: grid;
+  gap: 0.75rem;
+  min-height: 8rem;
+}
+
+.coordination-task {
+  padding: 1.25rem;
+  border: 1px solid #dfe4e8;
+  border-radius: 6px;
+  background: #fff;
+}
+
+.coordination-task__topline,
+.coordination-task__actions,
+.coordination__schedule,
+.coordination__schedule li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.coordination-task__topline h2,
+.coordination__schedule h2 {
+  margin: 0.4rem 0 0;
+  font-size: 1.05rem;
+}
+
+.coordination-task__topline time {
+  color: #65717b;
+  font-size: 0.82rem;
+}
+
+.coordination-task__status {
+  color: #7d5413;
+  font-size: 0.7rem;
+  font-weight: 800;
+}
+
+.coordination-task__status.status-acknowledged {
+  color: #16715e;
+}
+
+.coordination-task__meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  margin: 1.15rem 0;
+}
+
+.coordination-task__meta div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.coordination-task__meta dt {
+  color: #65717b;
+  font-size: 0.72rem;
+}
+
+.coordination-task__meta dd {
+  margin: 0;
+  font-size: 0.88rem;
+}
+
+.coordination-task code {
+  color: #33474b;
+  background: #edf3f1;
+  padding: 0.15rem 0.3rem;
+  border-radius: 3px;
+}
+
+.coordination-task__actions {
+  justify-content: flex-end;
+  min-height: 2.35rem;
+}
+
+.coordination-task__actions button {
+  min-height: 2.35rem;
+  padding: 0.45rem 0.85rem;
+  border: 1px solid #176957;
+  border-radius: 4px;
+  color: #fff;
+  background: #176957;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.coordination-task__actions button.button-secondary {
+  color: #176957;
+  background: #fff;
+}
+
+.coordination-task__actions button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
+.coordination__schedule {
+  align-items: flex-start;
+  margin-top: 1.5rem;
+  padding: 1.25rem 0;
+  border-top: 2px solid #c48a25;
+  border-bottom: 1px solid #dfe4e8;
+}
+
+.coordination__schedule.is-clear {
+  border-top-color: #29826f;
+}
+
+.coordination__schedule ul {
+  min-width: min(100%, 24rem);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.coordination__schedule li {
+  padding: 0.5rem 0;
+  border-bottom: 1px solid #edf0f2;
+}
+
+.coordination__schedule li span {
+  color: #65717b;
+  font-size: 0.82rem;
+}
+
+@media (max-width: 640px) {
+  .coordination__header,
+  .coordination-task__topline,
+  .coordination__schedule {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .coordination__brief {
+    min-width: 0;
+    text-align: left;
+  }
+
+  .coordination-task__actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .coordination-task__actions button {
+    width: 100%;
+  }
+}

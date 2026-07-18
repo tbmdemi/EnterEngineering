@@ -24,7 +24,19 @@ React export bắt buộc: `export const route = { path, label, Component }`; in
 ## Acceptance
 Handoff chưa acknowledge vẫn open; referral thiếu owner bị từ chối; evaluate lặp không clone task; overlap chair/appointment bị flag.
 
+## Build checkpoints
+
+| Checkpoint | Evidence |
+|---|---|
+| Baseline | Branch bắt đầu tại `63a529d`; 10 coordination tests và 7 foundation tests pass trước khi sửa. |
+| State machine | Handoff bắt buộc acknowledge; referral chỉ nhận care-team owner; mutation terminal idempotent. |
+| Seed và evaluator | Ba role có task seed; overlap, cancelled và half-open boundary có test; schedule key ổn định theo encounter. |
+| Integration | FastAPI router và React route được đăng ký; Vite proxy dùng `API_PROXY_TARGET`. |
+| Verification | `python -m unittest discover -s tests -v` chạy 26 tests; frontend build pass; desktop/mobile không overflow; PostgreSQL 16 API acceptance pass. |
+
+PostgreSQL 16.14 native đã được kiểm tra qua API thật. Docker Compose chưa chạy được vì Windows image hiện không có `VirtualMachinePlatform` hoặc Hyper-V component.
+
 ## Handoff integrator
 Router export: `backend.app.features.coordination.router` (`router`), API prefix nằm sẵn trong từng route `/api/v1`.
 Route export: `frontend/src/features/coordination/index.jsx` (`route`), URL `/coordination`.
-Verification: `python -m unittest tests.coordination.test_coordination -v`; idempotency `coord:{encounter_id}:schedule-conflict`; commit xem bằng `git rev-parse HEAD`.
+Verification: `python -m unittest discover -s tests -v`; idempotency `coord:{encounter_id}:schedule-conflict`; commit xem bằng `git rev-parse HEAD`.

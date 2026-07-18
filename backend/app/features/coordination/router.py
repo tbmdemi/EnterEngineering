@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -12,13 +12,14 @@ from ...dependencies import require_demo_role
 
 
 router = APIRouter(tags=["coordination"])
-STAFF_ROLES = {Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST, Role.QA}
+WORKLIST_ROLES = {Role.FRONT_DESK, Role.ASSISTANT, Role.DENTIST}
+STAFF_ROLES = WORKLIST_ROLES | {Role.QA}
 
 
 class TaskRequest(BaseModel):
     encounter_id: UUID
     obligation_code: str
-    task_type: str
+    task_type: Literal["HANDOFF", "REFERRAL"]
     owner_role: Optional[Role] = None
     due_at: Optional[datetime] = None
 
@@ -42,18 +43,25 @@ def validate_completion(task):
 def validate_task_request(task_type, owner_role):
     if task_type == "REFERRAL" and owner_role is None:
         raise AppError("REFERRAL_OWNER_REQUIRED", "Referral requires an owner", status_code=422)
-    if task_type == "REFERRAL" and owner_role not in STAFF_ROLES:
-        raise AppError("REFERRAL_OWNER_INVALID", "Referral owner must be a staff role", status_code=422)
+    if owner_role is not None and owner_role not in WORKLIST_ROLES:
+        code = "REFERRAL_OWNER_INVALID" if task_type == "REFERRAL" else "TASK_OWNER_INVALID"
+        raise AppError(code, "Task owner must have a coordination worklist", status_code=422)
 
 
 def find_conflicts(appointments):
-    active = [row for row in appointments if row["status"] != "CANCELLED"]
-    anchor = next((row for row in active if row.get("is_anchor")), active[0] if active else None)
-    if not anchor:
+    anchor = next((row for row in appointments if row.get("is_anchor")), appointments[0] if appointments else None)
+    if not anchor or anchor["status"] == "CANCELLED":
         return []
     return [
-        {"appointment_id": anchor["id"], "conflicts_with": row["id"], "chair": anchor["chair"]}
-        for row in active if row["id"] != anchor["id"] and row["chair"] == anchor["chair"]
+        {
+            "appointment_id": str(anchor["id"]),
+            "conflicts_with": str(row["id"]),
+            "chair": anchor["chair"],
+            "starts_at": row["starts_at"].isoformat(),
+            "ends_at": row["ends_at"].isoformat(),
+        }
+        for row in appointments if row["status"] != "CANCELLED"
+        and row["id"] != anchor["id"] and row["chair"] == anchor["chair"]
         and anchor["starts_at"] < row["ends_at"] and anchor["ends_at"] > row["starts_at"]
     ]
 
@@ -76,11 +84,22 @@ def load_appointments(encounter_id):
 @router.get("/api/v1/tasks")
 def worklist(owner_role: Role, role=Depends(require_demo_role)):
     _staff(role)
+    if owner_role not in WORKLIST_ROLES:
+        raise AppError("WORKLIST_ROLE_INVALID", "Coordination worklists are limited to care team roles", status_code=422)
     if role != Role.QA and role != owner_role:
         raise AppError("WORKLIST_ROLE_FORBIDDEN", "A role can only read its own worklist", status_code=403)
     with _connect() as connection:
         return [dict(row) for row in connection.execute(
-            "SELECT id, encounter_id, obligation_code, task_type, owner_role, status, due_at, idempotency_key FROM tasks WHERE owner_role = %s ORDER BY due_at NULLS LAST, id",
+            """
+            SELECT t.id, t.encounter_id, t.obligation_code, t.task_type, t.owner_role,
+                   t.status, t.due_at, t.idempotency_key,
+                   a.starts_at AS appointment_starts_at, a.ends_at AS appointment_ends_at, a.chair
+            FROM tasks t
+            JOIN encounters e ON e.id = t.encounter_id
+            LEFT JOIN appointments a ON a.id = e.appointment_id
+            WHERE t.owner_role = %s AND t.status IN ('OPEN', 'ACKNOWLEDGED')
+            ORDER BY t.due_at NULLS LAST, t.id
+            """,
             (owner_role.value,),
         ).fetchall()]
 
@@ -98,6 +117,7 @@ def create_task(request: TaskRequest, role=Depends(require_demo_role)):
     _staff(role)
     validate_task_request(request.task_type, request.owner_role)
     owner = request.owner_role or role
+    validate_task_request(request.task_type, owner)
     idempotency_key = f"coord:{request.encounter_id}:{request.task_type.lower()}:{request.obligation_code.lower()}"
     task = ensure_task(request.encounter_id, request.obligation_code, request.task_type, owner.value, request.due_at, idempotency_key)
     if request.task_type == "REFERRAL":
@@ -110,12 +130,18 @@ def create_task(request: TaskRequest, role=Depends(require_demo_role)):
 def acknowledge(task_id: UUID, role=Depends(require_demo_role)):
     task = _task(task_id)
     authorize_task_mutation(task, role)
+    if task["task_type"] != "HANDOFF":
+        raise AppError("TASK_ACKNOWLEDGMENT_NOT_REQUIRED", "Only handoff tasks can be acknowledged", status_code=409)
+    if task["status"] == TaskStatus.ACKNOWLEDGED.value:
+        return task
     if task["status"] == TaskStatus.COMPLETED.value:
         raise AppError("TASK_ALREADY_COMPLETED", "Completed task cannot be acknowledged", status_code=409)
+    if task["status"] == TaskStatus.CANCELLED.value:
+        raise AppError("TASK_CANCELLED", "Cancelled task cannot be acknowledged", status_code=409)
     with _connect() as connection:
         updated = dict(connection.execute("UPDATE tasks SET status = 'ACKNOWLEDGED' WHERE id = %s RETURNING *", (task_id,)).fetchone())
     if task["task_type"] == "HANDOFF":
-        upsert_evidence(task["encounter_id"], "COORD_HANDOFF_ACK", EvidenceState.VERIFIED.value, {"task_id": task_id, "acknowledged_by": role.value}, "TASK", task_id, role.value)
+        upsert_evidence(task["encounter_id"], "COORD_HANDOFF_ACK", EvidenceState.VERIFIED.value, {"task_id": str(task_id), "acknowledged_by": role.value}, "TASK", str(task_id), role.value)
     append_audit(role.value, "TASK_ACKNOWLEDGED", "task", task_id, task["encounter_id"], {})
     return updated
 
@@ -124,6 +150,10 @@ def acknowledge(task_id: UUID, role=Depends(require_demo_role)):
 def complete(task_id: UUID, role=Depends(require_demo_role)):
     task = _task(task_id)
     authorize_task_mutation(task, role)
+    if task["status"] == TaskStatus.COMPLETED.value:
+        return task
+    if task["status"] == TaskStatus.CANCELLED.value:
+        raise AppError("TASK_CANCELLED", "Cancelled task cannot be completed", status_code=409)
     validate_completion(task)
     with _connect() as connection:
         updated = dict(connection.execute("UPDATE tasks SET status = 'COMPLETED' WHERE id = %s RETURNING *", (task_id,)).fetchone())
@@ -138,6 +168,6 @@ def evaluate_coordination(encounter_id: UUID, role=Depends(require_demo_role)):
     upsert_evidence(encounter_id, "COORD_SCHEDULE_CLEAR", EvidenceState.VERIFIED.value, {"clear": not conflicts, "conflicts": conflicts}, "SCHEDULE", None, role.value)
     task = None
     if conflicts:
-        task = ensure_task(encounter_id, "COORD_SCHEDULE_CLEAR", "RESOLVE_SCHEDULE_CONFLICT", Role.FRONT_DESK.value, None, f"coord:{encounter_id}:schedule-conflict")
+        task = ensure_task(encounter_id, "COORD_SCHEDULE_CLEAR", "REVIEW_SCHEDULE_CONFLICT", Role.FRONT_DESK.value, None, f"coord:{encounter_id}:schedule-conflict")
     append_audit(role.value, "COORDINATION_EVALUATED", "encounter", encounter_id, encounter_id, {"conflict_count": len(conflicts)})
     return {"schedule_clear": not conflicts, "conflicts": conflicts, "task": task}
