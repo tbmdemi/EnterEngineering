@@ -170,7 +170,7 @@ class CoordinationLogicTest(unittest.TestCase):
     @patch.object(module, "ensure_task")
     def test_evaluation_uses_stable_idempotency_key(self, ensure_task, upsert_evidence, _append_audit):
         ensure_task.return_value = {"id": "t1", "idempotency_key": "coord:e1:schedule-conflict"}
-        with patch.object(module, "load_appointments", return_value=[
+        with patch.object(module, "require_encounter"), patch.object(module, "load_appointments", return_value=[
             {"id": "a", "is_anchor": True, "chair": "C1", "starts_at": datetime(2026, 1, 1, 9, tzinfo=timezone.utc), "ends_at": datetime(2026, 1, 1, 10, tzinfo=timezone.utc), "status": "BOOKED"},
             {"id": "b", "is_anchor": False, "chair": "C1", "starts_at": datetime(2026, 1, 1, 9, 30, tzinfo=timezone.utc), "ends_at": datetime(2026, 1, 1, 10, 30, tzinfo=timezone.utc), "status": "BOOKED"},
         ]):
@@ -181,12 +181,26 @@ class CoordinationLogicTest(unittest.TestCase):
         self.assertEqual(upsert_evidence.call_args.args[1:3], ("COORD_SCHEDULE_CLEAR", "VERIFIED"))
 
     @patch.object(module, "append_audit")
+    @patch.object(module, "upsert_evidence")
+    def test_clear_schedule_cancels_open_conflict_task(self, _upsert_evidence, _append_audit):
+        class Connection:
+            def __init__(self): self.calls = []
+            def execute(self, query, params): self.calls.append((query, params)); return self
+        connection = Connection()
+        @contextmanager
+        def connect(): yield connection
+        with patch.object(module, "require_encounter"), patch.object(module, "load_appointments", return_value=[]), patch.object(module, "_connect", connect):
+            module.evaluate_coordination(UUID("00000000-0000-0000-0000-000000000003"), Role.FRONT_DESK)
+        self.assertIn("status = 'CANCELLED'", connection.calls[0][0])
+
+    @patch.object(module, "append_audit")
     @patch.object(module, "ensure_task")
     def test_created_task_key_is_server_derived_and_scoped_to_encounter(self, ensure_task, _append_audit):
         ensure_task.side_effect = lambda *args: {"encounter_id": str(args[0]), "idempotency_key": args[-1], "id": "t"}
         base = dict(obligation_code="COORD_HANDOFF_ACK", task_type="HANDOFF", owner_role=Role.ASSISTANT, due_at=None)
-        one = module.create_task(module.TaskRequest(encounter_id=UUID("00000000-0000-0000-0000-000000000001"), **base), Role.FRONT_DESK)
-        two = module.create_task(module.TaskRequest(encounter_id=UUID("00000000-0000-0000-0000-000000000002"), **base), Role.FRONT_DESK)
+        with patch.object(module, "require_encounter"):
+            one = module.create_task(module.TaskRequest(encounter_id=UUID("00000000-0000-0000-0000-000000000001"), **base), Role.FRONT_DESK)
+            two = module.create_task(module.TaskRequest(encounter_id=UUID("00000000-0000-0000-0000-000000000002"), **base), Role.FRONT_DESK)
         self.assertNotEqual(one["idempotency_key"], two["idempotency_key"])
         self.assertEqual(one["encounter_id"], "00000000-0000-0000-0000-000000000001")
 
@@ -250,7 +264,7 @@ class CoordinationApiTest(unittest.TestCase):
         routes = (Path(__file__).parents[2] / "frontend/src/routes.js").read_text(encoding="utf-8")
         main = (Path(__file__).parents[2] / "frontend/src/main.jsx").read_text(encoding="utf-8")
         self.assertIn("coordinationRoute", routes)
-        self.assertIn("featureRoutes = [coordinationRoute]", routes)
+        self.assertIn("export const featureRoutes = [", routes)
         self.assertIn("<ActiveFeature />", main)
 
     def test_vite_proxy_targets_the_api_service_in_compose(self):

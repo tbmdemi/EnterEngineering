@@ -25,6 +25,6 @@ React export bắt buộc: `export const route = { path, label, Component }`; in
 Kết quả tái hiện được; draft không satisfied; evaluate lặp không clone task; audit có actor/action/object/time/correlation nhưng không raw note/chat; dashboard không lộ PHI.
 
 ## Handoff integrator
-Merged commits: liệt kê hash theo đúng thứ tự.
-Verification: ghi `make check`, reset và ba smoke runs.
-Known limits: chỉ ghi blocker demo còn lại, hoặc `none`.
+Merged commits: encounter `20681fc`, documentation-AI `9df7d21`, pre-treatment `01bcf0b`, coordination `63a529d`, post-treatment/chat `226f41c`.
+Verification: `make check` — 54 tests pass, Python compile, Compose config và Vite production build; FastAPI health/error/OpenAPI smoke pass.
+Known limits: Docker daemon không chạy trong session nên chưa boot PostgreSQL/reset demo; chạy `make reset-demo` khi Docker sẵn sàng. Frontend dev server proxy `/api` tới service `api:8000` trong Compose.
