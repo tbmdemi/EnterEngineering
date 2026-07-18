@@ -147,7 +147,7 @@ class PostTreatmentChatTest(unittest.TestCase):
         from backend.app.features.post_treatment_chat import service
 
         fixture = Path(service.__file__).with_name("approved_cards.v1.json")
-        cards = json.loads(fixture.read_text())
+        cards = json.loads(fixture.read_text(encoding="utf-8"))
         self.assertEqual(cards["version"], "dental-cards.v1")
         self.assertTrue(cards["approved_by"])
         for card in cards["cards"]:

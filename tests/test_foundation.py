@@ -93,8 +93,8 @@ class FoundationContractTest(unittest.TestCase):
         self.assertIn("/api/v1/encounters/{encounter_id}/pre-treatment", paths)
         self.assertIn("/api/v1/encounters/{encounter_id}/pre-treatment/{code}", paths)
 
-        registry = (ROOT / "frontend/src/routes.js").read_text()
-        app_source = (ROOT / "frontend/src/main.jsx").read_text()
+        registry = (ROOT / "frontend/src/routes.js").read_text(encoding="utf-8")
+        app_source = (ROOT / "frontend/src/main.jsx").read_text(encoding="utf-8")
         self.assertIn("preTreatmentRoute", registry)
         self.assertIn("window.location.pathname", app_source)
 
@@ -113,9 +113,9 @@ class FoundationContractTest(unittest.TestCase):
         self.assertIn("dental-policy.v1", seed)
 
     def test_frontend_container_uses_lockfile_and_proxies_api(self):
-        dockerfile = (ROOT / "frontend/Dockerfile").read_text()
-        config = (ROOT / "frontend/vite.config.js").read_text()
-        compose = (ROOT / "docker-compose.yml").read_text()
+        dockerfile = (ROOT / "frontend/Dockerfile").read_text(encoding="utf-8")
+        config = (ROOT / "frontend/vite.config.js").read_text(encoding="utf-8")
+        compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
 
         self.assertIn("package-lock.json", dockerfile)
         self.assertIn("npm", dockerfile)

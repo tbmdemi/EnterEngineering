@@ -17,8 +17,8 @@ class ComplianceEvaluatorTest(unittest.TestCase):
 
     def test_compliance_routes_are_registered(self):
         root = Path(__file__).parents[2]
-        backend = (root / "backend/app/main.py").read_text()
-        frontend = (root / "frontend/src/routes.js").read_text()
+        backend = (root / "backend/app/main.py").read_text(encoding="utf-8")
+        frontend = (root / "frontend/src/routes.js").read_text(encoding="utf-8")
 
         self.assertIn("compliance.router", backend)
         self.assertIn("complianceRoute", frontend)
@@ -42,13 +42,13 @@ class ComplianceEvaluatorTest(unittest.TestCase):
 
     def test_compliance_ui_exposes_evaluate_readiness_audit_and_dashboard(self):
         root = Path(__file__).parents[2]
-        source = (root / "frontend/src/features/compliance/index.jsx").read_text()
+        source = (root / "frontend/src/features/compliance/index.jsx").read_text(encoding="utf-8")
         for endpoint in ("/evaluate", "/readiness", "/audit-events", "/dashboard"):
             self.assertIn(endpoint, source)
 
     def test_app_shell_renders_the_active_feature_route(self):
         root = Path(__file__).parents[2]
-        source = (root / "frontend/src/main.jsx").read_text()
+        source = (root / "frontend/src/main.jsx").read_text(encoding="utf-8")
 
         self.assertIn("window.location.pathname", source)
         self.assertIn("ActiveFeature = activeRoute.Component", source)

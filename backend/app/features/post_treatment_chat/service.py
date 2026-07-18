@@ -30,7 +30,7 @@ class ChatResponse(BaseModel):
     escalation: bool = False
 
 
-APPROVED_CARDS = json.loads(Path(__file__).with_name("approved_cards.v1.json").read_text())
+APPROVED_CARDS = json.loads(Path(__file__).with_name("approved_cards.v1.json").read_text(encoding="utf-8"))
 RED_FLAG_ANSWER = next(card["answer"] for card in APPROVED_CARDS["cards"] if card.get("escalation"))
 
 

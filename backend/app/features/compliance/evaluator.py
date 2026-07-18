@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 POLICY_VERSION = "dental-policy.v1"
-POLICY = json.loads(Path(__file__).with_name(f"{POLICY_VERSION}.json").read_text())
+POLICY = json.loads(Path(__file__).with_name(f"{POLICY_VERSION}.json").read_text(encoding="utf-8"))
 
 
 def task_key(encounter_id, obligation_code):

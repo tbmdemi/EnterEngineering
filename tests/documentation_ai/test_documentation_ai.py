@@ -154,7 +154,7 @@ class DocumentationAiTest(unittest.TestCase):
         self.assertIs(exited_with, RuntimeError)
 
     def test_react_has_documentation_and_ai_review_flows(self):
-        source = (Path(__file__).parents[2] / "frontend/src/features/documentation-ai/index.jsx").read_text()
+        source = (Path(__file__).parents[2] / "frontend/src/features/documentation-ai/index.jsx").read_text(encoding="utf-8")
         for text in ('fetch("/api/v1/documentation"', 'fetch("/api/v1/ai/extract-note"', "consent_signed",
                      "treatment_plan_signed", "medication_prescribed", "source_span", 'state === "UNVERIFIED"'):
             self.assertIn(text, source)
