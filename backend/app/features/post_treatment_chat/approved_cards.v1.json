@@ -1,11 +1,16 @@
 {
   "version": "dental-cards.v1",
   "approved_by": "CareGuard Dental Clinical Lead",
+  "approved_at": "2026-07-17",
+  "governance_sources": [
+    {"title": "WHO ethics and governance guidance for large multi-modal models", "url": "https://www.who.int/publications/b/70584"},
+    {"title": "NHS England clinical guidance for urgent dental care", "url": "https://www.england.nhs.uk/long-read/clinical-guidance-unscheduled-urgent-and-non-urgent-dental-care/"}
+  ],
   "cards": [
-    {"id": "clinic-hours", "intent": "CLINIC_FAQ", "keywords": ["giờ", "mở cửa"], "answer": "Phòng khám mở cửa 08:00–17:00 từ thứ Hai đến thứ Sáu.", "source": "CareGuard Dental clinic information v1"},
+    {"id": "clinic-hours", "intent": "CLINIC_FAQ", "keywords": ["giờ mở cửa", "giờ làm việc", "mở cửa", "khi nào mở cửa"], "answer": "Phòng khám mở cửa 08:00–17:00 từ thứ Hai đến thứ Sáu.", "source": "CareGuard Dental clinic information v1"},
     {"id": "clinic-address", "intent": "CLINIC_FAQ", "keywords": ["địa chỉ"], "answer": "Địa chỉ demo: 123 Nguyễn Huệ, Quận 1.", "source": "CareGuard Dental clinic information v1"},
     {"id": "post-treatment-pain", "intent": "SYMPTOM_INFO", "keywords": ["đau"], "answer": "Đau nhẹ có thể xuất hiện sau điều trị. Làm theo hướng dẫn đã phát hành; nếu đau tăng hoặc kéo dài, hãy liên hệ phòng khám.", "source": "CareGuard Dental approved aftercare card v1"},
     {"id": "post-treatment-swelling", "intent": "SYMPTOM_INFO", "keywords": ["sưng"], "answer": "Sưng nhẹ có thể xuất hiện sau điều trị. Nếu sưng tăng nhanh, lan rộng hoặc kèm khó thở/nuốt, hãy đi cấp cứu ngay.", "source": "CareGuard Dental approved aftercare card v1"},
-    {"id": "emergency", "intent": "SYMPTOM_INFO", "keywords": ["khó thở", "khó nuốt", "sưng lan nhanh", "sưng lan rộng", "chảy máu không kiểm soát", "chấn thương nặng"], "answer": "Đây có thể là tình trạng khẩn cấp nha khoa. Hãy gọi cấp cứu địa phương hoặc đến cơ sở cấp cứu ngay; không chờ tư vấn qua chat.", "source": "CareGuard Dental emergency escalation card v1", "escalation": true}
+    {"id": "emergency", "intent": "SYMPTOM_INFO", "keywords": ["khó thở", "không thở được", "khó nuốt", "không nuốt được", "sưng lan nhanh", "sưng lan rộng", "sưng tăng nhanh", "sưng to nhanh", "chảy máu không kiểm soát", "chảy máu không cầm", "máu không cầm", "chấn thương nặng", "chấn thương nghiêm trọng"], "answer": "Đây có thể là tình trạng khẩn cấp nha khoa. Hãy gọi cấp cứu địa phương hoặc đến cơ sở cấp cứu ngay; không chờ tư vấn qua chat.", "source": "NHS England clinical guidance for urgent dental care", "source_url": "https://www.england.nhs.uk/long-read/clinical-guidance-unscheduled-urgent-and-non-urgent-dental-care/", "escalation": true}
   ]
 }
