@@ -25,6 +25,10 @@ append_audit(actor_role, action, object_type, object_id, encounter_id, metadata)
 
 Các module export một FastAPI `router` và React `export const route = { path, label, Component }`; integrator import route vào `frontend/src/routes.js` và router vào app bootstrap. Policy cố định là `dental-policy.v1`.
 
+### Merge-critical AI context: Pre-treatment Safety
+
+Before merging or extending Module 03, read [its merge-critical context and source-of-truth contract](modules/03-pre-treatment.md#ai-context-and-source-of-truth-decisions). Pre-treatment does not own a second patient history, raw note/chat storage, an AI provider, image AI or clinical decisioning. It reviews cited sources from Encounter/Documentation & Staff AI, then a human records current-encounter `PRE_*` evidence. AI output remains `DRAFT/UNVERIFIED` until human confirmation.
+
 ## Timeline và Definition of Done
 
 - H0–H2: foundation/contracts/seed; mọi branch tách từ commit `foundation-v1`.
